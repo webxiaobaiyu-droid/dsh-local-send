@@ -11,20 +11,25 @@
  */
 
 import {
+  CANCEL_PATH,
   DECIDE_PATH,
   INSPECT_PATH,
   PREPARE_PATH,
   RENAME_PATH,
+  RETRY_PATH,
   REVEAL_PATH,
   SCAN_PATH,
   SEND_PATHS_PATH,
   STATE_PATH,
   STREAM_PATH,
+  type CancelTransferRequest,
   type DecideRequest,
   type LocalSendState,
   type PathCandidate,
   type PrepareSendRequest,
   type PrepareSendResponse,
+  type RetryTransferRequest,
+  type RetryTransferResponse,
   type SendPathsRequest,
   type SendPathsResponse,
 } from '../types.ts'
@@ -141,11 +146,34 @@ export async function sendPaths(request: SendPathsRequest): Promise<SendPathsRes
 
 /**
  * Answer an incoming offer.
+ *
+ * `fileIds` is left absent when the surface answering had no file list to show —
+ * a notification with a single Accept button — which the host reads as "every
+ * file its own limits left standing". An empty array means the user unticked
+ * everything, and is a refusal rather than an empty transfer.
+ *
  * @param request - the offer and the answer.
  * @returns whether a decision was still pending.
  */
 export async function decide(request: DecideRequest): Promise<{ decided: boolean }> {
   return await post<{ decided: boolean }>(DECIDE_PATH, request)
+}
+
+/**
+ * Stop a transfer this device is part of.
+ * @param request - the row to stop.
+ */
+export async function cancelTransfer(request: CancelTransferRequest): Promise<void> {
+  await post<{ canceled: boolean }>(CANCEL_PATH, request)
+}
+
+/**
+ * Send a settled outgoing transfer again, from its files on this machine.
+ * @param request - the row to send again.
+ * @returns the new row the attempt was recorded as.
+ */
+export async function retryTransfer(request: RetryTransferRequest): Promise<RetryTransferResponse> {
+  return await post<RetryTransferResponse>(RETRY_PATH, request)
 }
 
 /**

@@ -44,7 +44,7 @@ import {
   type DeviceInfo,
   type FileMetadata,
 } from './protocol.ts'
-import type { TransferRegistry } from './transfer.ts'
+import type { OfferDecision, TransferRegistry } from './transfer.ts'
 import { ensureDirectories, receiveDirectory, type LocalSendConfig, type StorePaths } from './store.ts'
 
 /** How long a sender waits for the user to decide before the offer is refused. */
@@ -100,6 +100,41 @@ interface ServerSession {
   readonly claimed: Set<string>
   /** Bytes accepted, for the running total check. */
   acceptedBytes: number
+  /**
+   * Set once the user has stopped this transfer.
+   *
+   * The upload loop reads it per chunk, because stopping a transfer has to take
+   * effect during a multi-gigabyte write rather than after it: a cancel that
+   * only repainted the row would leave the bytes arriving under a label that
+   * said they had stopped.
+   */
+  cancelled: boolean
+  /** Staging files this session is writing, so a cancel can remove them. */
+  readonly staging: Set<string>
+  /**
+   * Requests currently writing into this session.
+   *
+   * Held so a cancel can destroy them. Reading the byte count per chunk is not
+   * enough on its own: a sender that has gone quiet — the very sender a user is
+   * most likely to be cancelling — would leave the read loop blocked on a chunk
+   * that never comes, and the transfer would outlive the cancel that was
+   * supposed to stop it.
+   */
+  readonly active: Set<ActiveUpload>
+}
+
+/**
+ * One upload writing into a session right now.
+ *
+ * The response is held beside the request because a cancel has to answer before
+ * it disconnects: destroying the request first takes the socket with it, and the
+ * sender would see a dropped connection instead of the reason it was dropped.
+ */
+interface ActiveUpload {
+  /** The request whose body is being read. */
+  readonly request: IncomingMessage
+  /** The response that request will be answered on. */
+  readonly response: ServerResponse
 }
 
 /**
@@ -310,8 +345,12 @@ export class LocalSendServer {
     const server = this.server
     this.server = undefined
     this.closed = true
-    for (const session of this.sessions.values()) this.host.registry.cancel(session.id)
-    this.sessions.clear()
+    // Each session is torn down through the same path a user's cancel takes, so
+    // the two cannot disagree about what "no longer serving this" leaves behind:
+    // the staging files go, the rows settle, and an upload already inside its
+    // write loop is told to stop rather than being left to finish against a
+    // server that is closing.
+    for (const id of [...this.sessions.keys()]) this.cancelSession(id)
     if (server === undefined) return
     await new Promise<void>((resolve) => {
       server.close(() => { resolve() })
@@ -473,13 +512,21 @@ export class LocalSendServer {
     }
 
     this.pendingSenders.set(id, remoteAddress)
-    let acceptedByUser: boolean
+    let decision: OfferDecision
     try {
-      acceptedByUser = config.autoAccept ? true : await this.awaitDecision(id)
+      // `autoAccept` answers `acceptAll` rather than a list, because the roster
+      // is this frame's and a decision made without showing one cannot name it.
+      decision = config.autoAccept ? { kind: 'acceptAll' } : await this.awaitDecision(id)
     } finally {
       this.pendingSenders.delete(id)
     }
-    if (!acceptedByUser) {
+    // Exactly the files the user picked out of the ones this device's own
+    // screening left standing. A file screened out was never on offer, so it can
+    // never be chosen.
+    const chosen = decision.kind === 'acceptSome'
+      ? accepted.filter(entry => decision.fileIds.includes(entry.id))
+      : accepted
+    if (decision.kind === 'decline' || chosen.length === 0) {
       this.host.registry.update(id, (transfer) => {
         transfer.status = 'declined'
         for (const file of transfer.files) {
@@ -493,11 +540,24 @@ export class LocalSendServer {
       return
     }
 
+    // A file the user left unticked is `skipped` rather than `declined`, and
+    // the difference is the whole reason for the second status: this device was
+    // not refused anything by anybody, so a batch that arrived whole must not be
+    // reported as "partly done" because the user chose to take less.
+    const chosenIds = new Set(chosen.map(entry => entry.id))
+    for (const entry of accepted) {
+      if (chosenIds.has(entry.id)) continue
+      this.host.registry.updateFile(id, entry.id, (file) => {
+        file.status = 'skipped'
+        delete file.error
+      })
+    }
+
     // Tokens are minted only now, so a token cannot exist for a transfer the
     // user has not accepted — there is no window in which a guessed session id
     // is worth anything.
     const tokens = new Map<string, string>()
-    for (const entry of accepted) tokens.set(entry.id, randomUUID())
+    for (const entry of chosen) tokens.set(entry.id, randomUUID())
     // The receive directory is materialized here rather than at preparation: a
     // user who declines every offer should not have a directory created for the
     // transfer they refused.
@@ -506,9 +566,12 @@ export class LocalSendServer {
       id,
       remoteAddress,
       tokens,
-      files: new Map(accepted.map(entry => [entry.id, entry])),
+      files: new Map(chosen.map(entry => [entry.id, entry])),
       claimed: this.claimedOnDisk(directory),
-      acceptedBytes: accepted.reduce((sum, entry) => sum + entry.size, 0),
+      acceptedBytes: chosen.reduce((sum, entry) => sum + entry.size, 0),
+      cancelled: false,
+      staging: new Set(),
+      active: new Set(),
     })
     this.host.registry.update(id, (transfer) => {
       transfer.status = 'transferring'
@@ -529,13 +592,13 @@ export class LocalSendServer {
    * resolve to refusal rather than to a request that never ends.
    *
    * @param id - registry row id.
-   * @returns whether the transfer was accepted.
+   * @returns what the user decided.
    */
-  private async awaitDecision(id: string): Promise<boolean> {
+  private async awaitDecision(id: string): Promise<OfferDecision> {
     const decision = this.host.registry.await(id)
     let timer: NodeJS.Timeout | undefined
-    const timeout = new Promise<boolean>((resolve) => {
-      timer = setTimeout(() => { resolve(false) }, APPROVAL_TIMEOUT_MS)
+    const timeout = new Promise<OfferDecision>((resolve) => {
+      timer = setTimeout(() => { resolve({ kind: 'decline' }) }, APPROVAL_TIMEOUT_MS)
       timer.unref()
     })
     try {
@@ -712,6 +775,9 @@ export class LocalSendServer {
     session.claimed.add(finalName)
     const destination = join(directory, finalName)
     const staging = join(directory, '.partial', randomUUID())
+    const inFlight: ActiveUpload = { request, response }
+    session.staging.add(staging)
+    session.active.add(inFlight)
 
     const hash = createHash('sha256')
     const stream = createWriteStream(staging)
@@ -719,6 +785,14 @@ export class LocalSendServer {
     let aborted: number | undefined
     try {
       for await (const chunk of request) {
+        // A session the user stopped while this file was arriving. Checked here
+        // rather than once before the loop because stopping has to reach a file
+        // that is still being written, and it is the only moment the answer can
+        // change.
+        if (session.cancelled) {
+          aborted = STATUS.conflict
+          break
+        }
         const buffer = chunk as Buffer
         received += buffer.length
         // The agreed size is the ceiling, not the announced one: a sender that
@@ -742,14 +816,31 @@ export class LocalSendServer {
     } catch (error: unknown) {
       stream.destroy()
       rmSync(staging, { force: true })
+      // A request destroyed by a cancel arrives here as an exception, so the two
+      // causes have to be told apart: only one of them is the sender's problem,
+      // and they want different answers.
+      if (session.cancelled) {
+        if (!response.headersSent) fail(response, STATUS.conflict, 'the transfer was stopped')
+        return
+      }
       this.failFile(session.id, metadata.id, describe(error))
       if (!response.headersSent) fail(response, STATUS.serverError, MESSAGE.internal)
       return
+    } finally {
+      session.staging.delete(staging)
+      session.active.delete(inFlight)
     }
 
     if (aborted !== undefined) {
       stream.destroy()
       rmSync(staging, { force: true })
+      // Two conditions share this exit and they are not the same thing to say: a
+      // sender that overran its own metadata is at fault, while a file stopped
+      // by the user is not.
+      if (session.cancelled) {
+        if (!response.headersSent) fail(response, aborted, 'the transfer was stopped')
+        return
+      }
       const reason = 'the sender sent more bytes than it offered'
       this.failFile(session.id, metadata.id, reason)
       // A descriptive message rather than one of the spec's fixed strings: this
@@ -815,10 +906,53 @@ export class LocalSendServer {
    * @param reason - message to show the user.
    */
   private failFile(transferId: string, fileId: string, reason: string): void {
+    // A file stopped by the user has not failed, and the row already says so:
+    // writing a failure over a cancelled transfer would present the user's own
+    // decision as something that went wrong.
+    if (this.host.registry.get(transferId)?.status === 'canceled') return
     this.host.registry.updateFile(transferId, fileId, (file) => {
       file.status = 'failed'
       file.error = reason
     })
+  }
+
+  /**
+   * Stop serving one incoming transfer.
+   *
+   * The whole of "cancel a receive": the session leaves the table so no further
+   * upload is authorised, the sessions already being written are told to stop,
+   * their staging files are removed so a partial never sits in the receive
+   * directory, and the registry row is settled as canceled.
+   *
+   * @param id - the session, which is also the registry row id.
+   * @returns whether a session was actually being served.
+   */
+  cancelSession(id: string): boolean {
+    const session = this.sessions.get(id)
+    if (session === undefined) return false
+    // Set before the delete, so an upload already inside its write loop sees it
+    // on its next chunk rather than racing the table.
+    session.cancelled = true
+    this.sessions.delete(id)
+    // Answered, then disconnected, in that order: the sender is owed a reason,
+    // and a request destroyed first would take its response with it. This is
+    // also what unblocks a loop waiting on a sender that has gone quiet — the
+    // case a per-chunk check alone cannot reach.
+    for (const inFlight of session.active) {
+      if (!inFlight.response.headersSent) {
+        fail(inFlight.response, STATUS.conflict, 'the transfer was stopped')
+      }
+      inFlight.request.destroy()
+    }
+    for (const metadata of session.files.values()) {
+      this.host.registry.updateFile(id, metadata.id, (file) => {
+        if (file.status !== 'done') file.status = 'declined'
+      })
+    }
+    for (const staging of session.staging) rmSync(staging, { force: true })
+    session.staging.clear()
+    this.host.registry.cancel(id)
+    return true
   }
 
   /**
@@ -854,7 +988,7 @@ export class LocalSendServer {
       for (const [id, pendingAddress] of this.pendingSenders) {
         if (pendingAddress !== remoteAddress) continue
         this.senderCancelled.add(id)
-        this.host.registry.decide(id, false)
+        this.host.registry.decide(id, { kind: 'decline' })
       }
       empty(response, STATUS.ok)
       return
@@ -863,20 +997,17 @@ export class LocalSendServer {
     // The same withdrawal, but by a sender that did get the id back.
     if (this.pendingSenders.get(sessionId) === remoteAddress) {
       this.senderCancelled.add(sessionId)
-      this.host.registry.decide(sessionId, false)
+      this.host.registry.decide(sessionId, { kind: 'decline' })
       empty(response, STATUS.ok)
       return
     }
 
-    const session = this.sessions.get(sessionId)
-    if (session !== undefined && session.remoteAddress === remoteAddress) {
-      this.sessions.delete(sessionId)
-      for (const metadata of session.files.values()) {
-        this.host.registry.updateFile(sessionId, metadata.id, (file) => {
-          if (file.status !== 'done') file.status = 'declined'
-        })
-      }
-      this.host.registry.cancel(sessionId)
+    // A withdrawal and the user's own cancel end a session the same way, so
+    // there is one teardown. The deleted entry is what tells the two apart
+    // afterwards: `senderCancelled` is only consulted while a decision is still
+    // pending, and by here the sender has already been answered.
+    if (this.sessions.get(sessionId)?.remoteAddress === remoteAddress) {
+      this.cancelSession(sessionId)
     }
     // A cancel for a session this device does not know is still a success: the
     // reference implementation answers 200 for unknown sessions, and a sender

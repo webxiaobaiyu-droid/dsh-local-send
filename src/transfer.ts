@@ -58,6 +58,28 @@ export type Transfer = Live<TransferRow>
 /** A listener notified when the table changes. */
 export type TransferListener = () => void
 
+/**
+ * The user's answer to one incoming offer.
+ *
+ * Three outcomes rather than a boolean, because "yes", "yes, but only these" and
+ * "no" are three different things to tell a sender. The protocol only has two —
+ * a token per accepted file is the whole of its vocabulary — so the middle case
+ * is expressed by minting tokens for a subset, and the last by a `403`.
+ *
+ * `acceptAll` is not `acceptSome` with every id: the caller settles that, and it
+ * cannot know the roster. Keeping them apart is what stops a decision made
+ * before the file list was on screen from meaning "accept nothing" — which an
+ * empty `acceptSome` does mean, deliberately, because deselecting every file in
+ * the panel is a refusal and has to read as one on the wire.
+ */
+export type OfferDecision =
+  /** Refuse the offer: the sender is told no and nothing is written. */
+  | { readonly kind: 'decline' }
+  /** Take every file the receiver's own screening left standing. */
+  | { readonly kind: 'acceptAll' }
+  /** Take exactly these file ids. An empty list is a refusal. */
+  | { readonly kind: 'acceptSome'; readonly fileIds: readonly string[] }
+
 /** One file as a caller describes it when opening a transfer. */
 export interface OpenFile {
   /** Sender-assigned identifier, unique within the transfer. */
@@ -95,7 +117,16 @@ export class TransferRegistry {
   private readonly transfers = new Map<string, Transfer>()
   private readonly listeners = new Set<TransferListener>()
   /** One pending decision per incoming transfer awaiting the user. */
-  private readonly decisions = new Map<string, (accepted: boolean) => void>()
+  private readonly decisions = new Map<string, (decision: OfferDecision) => void>()
+  /**
+   * One abort controller per transfer whose in-flight work can be stopped.
+   *
+   * Created on first use rather than at open time: most transfers run to
+   * completion, and a controller per row would be bookkeeping for an event that
+   * usually never happens. {@link stop} is the only writer, and it is what makes
+   * a cancel reach the socket instead of only the panel.
+   */
+  private readonly stoppers = new Map<string, AbortController>()
 
   /**
    * @param keep - how many finished transfers to retain before the oldest is dropped.
@@ -299,18 +330,32 @@ export class TransferRegistry {
    */
   settle(id: string, fallback: TransferStatus = 'failed'): void {
     this.update(id, (transfer) => {
-      const done = transfer.files.filter(file => file.status === 'done').length
-      const failed = transfer.files.filter(file => file.status === 'failed').length
-      const declined = transfer.files.filter(file => file.status === 'declined').length
-      if (done === transfer.files.length) {
+      // A transfer the user stopped keeps that outcome. Settling recomputes from
+      // the files, and a cancel marks them declined — so without this guard a
+      // cancellation would be rewritten as "declined" the moment the aborted
+      // work reported back, which reads as the other device's doing.
+      if (transfer.status === 'canceled') return
+      // A file the user chose not to take was never part of the transfer: it is
+      // neither a failure nor a loss, so it is left out of the arithmetic
+      // entirely. Counting it would report a batch the user got exactly what
+      // they asked for out of as "partly done".
+      const wanted = transfer.files.filter(file => file.status !== 'skipped')
+      if (wanted.length === 0) {
+        transfer.status = 'declined'
+        return
+      }
+      const done = wanted.filter(file => file.status === 'done').length
+      const failed = wanted.filter(file => file.status === 'failed').length
+      const declined = wanted.filter(file => file.status === 'declined').length
+      if (done === wanted.length) {
         transfer.status = 'done'
         return
       }
-      if (done > 0 && done + failed + declined === transfer.files.length) {
+      if (done > 0 && done + failed + declined === wanted.length) {
         transfer.status = 'partial'
         return
       }
-      if (declined === transfer.files.length) {
+      if (declined === wanted.length) {
         transfer.status = 'declined'
         return
       }
@@ -325,14 +370,23 @@ export class TransferRegistry {
    */
   fail(id: string, error: string): void {
     this.update(id, (transfer) => {
+      if (transfer.status === 'canceled') return
       transfer.status = 'failed'
       transfer.error = error
     })
-    this.decide(id, false)
+    // A transfer that failed must not leave the sender's HTTP request open until
+    // its own timeout: the answer is now, and it is no.
+    this.decide(id, { kind: 'decline' })
   }
 
   /**
    * Mark a whole transfer canceled by either side.
+   *
+   * Both the row and the socket: the row is what the panel shows, and the abort
+   * is what makes an in-flight upload or download actually stop. A cancel that
+   * only repainted the row would leave a multi-gigabyte transfer running behind
+   * a label that said it had stopped.
+   *
    * @param id - registry identifier.
    */
   cancel(id: string): void {
@@ -343,7 +397,61 @@ export class TransferRegistry {
         if (file.status === 'offered' || file.status === 'transferring') file.status = 'declined'
       }
     })
-    this.decide(id, false)
+    this.stopperFor(id).abort()
+    // A cancel is also an answer to a decision nobody has given yet: the panel
+    // may be mid-prompt, and the abort has already gone out.
+    this.decide(id, { kind: 'decline' })
+  }
+
+  /**
+   * The signal that abandons a transfer's in-flight work.
+   *
+   * Handed to `fetch` by whatever is moving bytes for the row, so a cancel
+   * reaches the request rather than waiting for it to finish. The same signal is
+   * returned for every call on one transfer, because a batch runs several
+   * uploads at once and they all have to stop together.
+   *
+   * @param id - registry identifier.
+   * @returns the transfer's signal, aborted once it has been stopped.
+   */
+  signalFor(id: string): AbortSignal {
+    return this.stopperFor(id).signal
+  }
+
+  /**
+   * This transfer's abort controller, created on first ask.
+   *
+   * Creation is shared with {@link cancel} so that a cancel arriving *before*
+   * anything has asked for the signal is remembered rather than lost: the work
+   * that starts afterwards still has to find it already aborted. A cancel that
+   * only aborted controllers it happened to find would silently do nothing in
+   * exactly the case a user is most likely to hit — stopping a transfer before
+   * its first byte has moved.
+   *
+   * @param id - registry identifier.
+   * @returns the controller, aborted once the transfer has been stopped.
+   */
+  private stopperFor(id: string): AbortController {
+    const existing = this.stoppers.get(id)
+    if (existing !== undefined) return existing
+    const controller = new AbortController()
+    this.stoppers.set(id, controller)
+    return controller
+  }
+
+  /**
+   * Whether a transfer has been stopped.
+   *
+   * Asked by the work that is being abandoned, which cannot tell an abort from
+   * any other transport failure: a reader that reported the raw `AbortError`
+   * would show "This operation was aborted" against a row the user had already
+   * told to stop.
+   *
+   * @param id - registry identifier.
+   * @returns whether {@link cancel} has stopped this transfer.
+   */
+  stopped(id: string): boolean {
+    return this.stoppers.get(id)?.signal.aborted === true
   }
 
   /**
@@ -355,11 +463,11 @@ export class TransferRegistry {
    * immediately as declined, so a malformed sender cannot accumulate resolvers.
    *
    * @param id - registry identifier.
-   * @returns whether the transfer was accepted.
+   * @returns what the user decided.
    */
-  await(id: string): Promise<boolean> {
-    if (this.decisions.has(id)) return Promise.resolve(false)
-    return new Promise<boolean>((resolve) => {
+  await(id: string): Promise<OfferDecision> {
+    if (this.decisions.has(id)) return Promise.resolve<OfferDecision>({ kind: 'decline' })
+    return new Promise<OfferDecision>((resolve) => {
       this.decisions.set(id, resolve)
     })
   }
@@ -367,14 +475,14 @@ export class TransferRegistry {
   /**
    * Settle a pending decision.
    * @param id - registry identifier.
-   * @param accepted - the user's answer.
+   * @param decision - the user's answer.
    * @returns whether a decision was actually pending.
    */
-  decide(id: string, accepted: boolean): boolean {
+  decide(id: string, decision: OfferDecision): boolean {
     const resolve = this.decisions.get(id)
     if (resolve === undefined) return false
     this.decisions.delete(id)
-    resolve(accepted)
+    resolve(decision)
     return true
   }
 
@@ -388,13 +496,15 @@ export class TransferRegistry {
   declineAll(): void {
     for (const [id, resolve] of this.decisions) {
       this.decisions.delete(id)
-      resolve(false)
+      resolve({ kind: 'decline' })
     }
   }
 
-  /** Forget every transfer and settle every decision. */
+  /** Forget every transfer, stop everything moving, and settle every decision. */
   clear(): void {
     this.declineAll()
+    for (const controller of this.stoppers.values()) controller.abort()
+    this.stoppers.clear()
     this.transfers.clear()
     this.notify()
   }

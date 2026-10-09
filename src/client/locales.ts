@@ -98,6 +98,9 @@ export const zh = {
   'fileStatus.done': '已完成',
   'fileStatus.failed': '失败',
   'fileStatus.declined': '已拒绝',
+  // Apart from `declined` on purpose: this one is the user's own choice, and
+  // calling it "rejected" would blame the other device for it.
+  'fileStatus.skipped': '未选择',
 
   // The point of the whole panel
   addToConversation: '加入会话',
@@ -106,6 +109,48 @@ export const zh = {
   noSession: '请先打开一个会话',
   reveal: '在文件夹中显示',
   savedTo: '已保存到 {path}',
+
+  // The panel's own controls. `sendFiles` is the one that was written and never
+  // wired, which is why the panel could only be fed by dragging.
+  sendFilesHint: '选择本机文件，然后拖到下方设备上或直接发送',
+  openInbox: '打开收件箱',
+  inboxLabel: '收件箱',
+  loading: '正在读取状态…',
+
+  // Per-file receiving
+  selectAll: '全选',
+  selectNone: '全不选',
+  selectedOf: '已选 {count}/{total}',
+  acceptSelected: '接收所选（{count}）',
+  noFileSelected: '请至少选择一个文件，或点「拒绝」',
+
+  // Transfers the user can still act on
+  stopTransfer: '停止',
+  retryTransfer: '重试',
+  retryTransferHint: '用同样的文件再发一次',
+
+  // The right-click menu. It is this plugin's own menu rather than an item in
+  // DSH's, because DSH has no seat for one — see `context-target.ts`.
+  menuSendTo: '隔空发送到',
+  menuNoPeers: '现在没有可发送的设备',
+  menuFoldersUnsupported: '这个插件发送文件，不发送文件夹',
+  menuCopyPath: '复制路径',
+  menuCopied: '路径已复制',
+  menuCopyFailed: '无法访问剪贴板',
+  menuSending: '正在发送到 {alias}…',
+  menuSent: '已发送到 {alias}',
+  menuSendFailed: '发送失败：{message}',
+
+  // The companion in the conversation header, and the banner above the composer.
+  openPanel: '打开面板',
+  buddyLabel: '隔空传文件',
+  buddyOffered: '{count} 个文件等待确认',
+  buddyOfferedOne: '{name} 等待确认',
+  buddyBusy: '正在传输 · {percent}%',
+  buddyDone: '刚刚完成一次传输',
+  buddyFailed: '有一次传输没有完成',
+  buddyIdleHint: '附近没有设备，也没有进行中的传输',
+  buddyAdd: '加入会话',
 
   // Failure surfaces. The `detail` these carry is the operating system's own
   // message, deliberately left untranslated: it is what a search for the
@@ -192,6 +237,7 @@ export const en: Record<LocalSendLocaleKey, string> = {
   'fileStatus.done': 'Done',
   'fileStatus.failed': 'Failed',
   'fileStatus.declined': 'Declined',
+  'fileStatus.skipped': 'Not selected',
 
   addToConversation: 'Add to conversation',
   addedToConversation: 'Added to the composer',
@@ -199,6 +245,41 @@ export const en: Record<LocalSendLocaleKey, string> = {
   noSession: 'Open a conversation first',
   reveal: 'Show in folder',
   savedTo: 'Saved to {path}',
+
+  sendFilesHint: 'Choose files on this machine, then drop them on a device or send them straight away',
+  openInbox: 'Open the inbox',
+  inboxLabel: 'Inbox',
+  loading: 'Reading the current state…',
+
+  selectAll: 'All',
+  selectNone: 'None',
+  selectedOf: '{count} of {total} selected',
+  acceptSelected: 'Receive {count}',
+  noFileSelected: 'Pick at least one file, or decline the offer',
+
+  stopTransfer: 'Stop',
+  retryTransfer: 'Send again',
+  retryTransferHint: 'Send the same files again',
+
+  menuSendTo: 'Send over the network to',
+  menuNoPeers: 'No device is available to send to right now',
+  menuFoldersUnsupported: 'This plugin sends files, not folders',
+  menuCopyPath: 'Copy path',
+  menuCopied: 'Path copied',
+  menuCopyFailed: 'The clipboard is not available',
+  menuSending: 'Sending to {alias}…',
+  menuSent: 'Sent to {alias}',
+  menuSendFailed: 'Sending failed: {message}',
+
+  openPanel: 'Open the panel',
+  buddyLabel: 'Nearby transfer',
+  buddyOffered: '{count} files are waiting for you',
+  buddyOfferedOne: '{name} is waiting for you',
+  buddyBusy: 'Transferring · {percent}%',
+  buddyDone: 'A transfer just finished',
+  buddyFailed: 'A transfer did not finish',
+  buddyIdleHint: 'No devices nearby and nothing in flight',
+  buddyAdd: 'Add to conversation',
 
   'warning.portUnavailable': 'Cannot listen on port {port}, so files cannot arrive right now: {detail}',
   'warning.discoveryUnavailable': 'Device discovery is off, so other devices on this network cannot be seen: {detail}',

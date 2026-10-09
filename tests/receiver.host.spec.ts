@@ -254,7 +254,7 @@ describe('LocalSend receiver', () => {
     // it, then answer the way the panel's Decline button does.
     const row = await waitForTransfer(harness)
     expect(row.status).toBe('awaiting')
-    harness.registry.decide(row.id, false)
+    harness.registry.decide(row.id, { kind: 'decline' })
     const response = await pending
     expect(response.status).toBe(STATUS.forbidden)
     expect(await response.json()).toEqual({ message: MESSAGE.rejected })
@@ -345,6 +345,116 @@ describe('LocalSend receiver', () => {
     // Release the first so the harness can shut down cleanly.
     harness.registry.declineAll()
     await first
+  })
+
+  it('takes only the files the user picked out of a batch', async () => {
+    const harness = await startReceiver()
+    const first = Buffer.from('not wanted')
+    const second = Buffer.from('wanted')
+    const pending = prepare(harness, offer([
+      fileOf('a', 'one.txt', first),
+      fileOf('b', 'two.txt', second),
+    ]))
+    const row = await waitForTransfer(harness)
+    // What the panel's per-file tick sends.
+    harness.registry.decide(row.id, { kind: 'acceptSome', fileIds: ['b'] })
+    const answered = await pending
+    expect(answered.status).toBe(STATUS.ok)
+    const body = await answered.json() as { sessionId: string; files: Record<string, string> }
+    // The token map is the protocol's only way to say which files were taken, so
+    // its shape is the assertion that matters — a phone reading this decides
+    // what to upload from it.
+    expect(Object.keys(body.files)).toEqual(['b'])
+
+    const upload = await fetch(
+      `${urlOf(harness, 'upload')}?sessionId=${body.sessionId}&fileId=b&token=${body.files['b'] as string}`,
+      { method: 'POST', body: second },
+    )
+    expect(upload.status).toBe(STATUS.ok)
+
+    const settled = harness.registry.get(body.sessionId)
+    // The file the user did not tick is `skipped`, not `declined`, and the
+    // transfer is `done` rather than `partial`: they got everything they asked
+    // for, and reporting their own choice as an incomplete transfer would be
+    // telling them something that is not true.
+    expect(settled?.files.find(file => file.id === 'a')?.status).toBe('skipped')
+    expect(settled?.files.find(file => file.id === 'b')?.status).toBe('done')
+    expect(settled?.status).toBe('done')
+    const { readdirSync } = await import('node:fs')
+    expect(readdirSync(harness.inbox).filter(name => name !== '.partial')).toEqual(['two.txt'])
+  })
+
+  it('reads unticking every file as a refusal rather than an empty transfer', async () => {
+    const harness = await startReceiver()
+    const pending = prepare(harness, offer([fileOf('a', 'note.txt', Buffer.from('nope'))]))
+    const row = await waitForTransfer(harness)
+    harness.registry.decide(row.id, { kind: 'acceptSome', fileIds: [] })
+    const response = await pending
+    // A `200` carrying no tokens would leave the sender holding a session for a
+    // transfer with nothing in it, which is not a thing the protocol has.
+    expect(response.status).toBe(STATUS.forbidden)
+    expect(await response.json()).toEqual({ message: MESSAGE.rejected })
+  })
+
+  it('stops serving a transfer the user cancels', async () => {
+    const harness = await startReceiver()
+    const bytes = Buffer.from('stopped before it started')
+    const pending = prepare(harness, offer([fileOf('a', 'note.txt', bytes)]))
+    const row = await waitForTransfer(harness)
+    harness.registry.decide(row.id, { kind: 'acceptAll' })
+    const answered = await pending
+    const body = await answered.json() as { sessionId: string; files: Record<string, string> }
+
+    expect(harness.server.cancelSession(body.sessionId)).toBe(true)
+    const upload = await fetch(
+      `${urlOf(harness, 'upload')}?sessionId=${body.sessionId}&fileId=a&token=${body.files['a'] as string}`,
+      { method: 'POST', body: bytes },
+    )
+    // The token was real and has stopped being worth anything, which is the
+    // security half of a cancel: a sender that already holds it must not be able
+    // to write a file the user has just refused.
+    expect(upload.status).toBe(STATUS.forbidden)
+    expect(harness.registry.get(body.sessionId)?.status).toBe('canceled')
+    const { readdirSync } = await import('node:fs')
+    expect(readdirSync(harness.inbox).filter(name => name !== '.partial')).toEqual([])
+  })
+
+  it('ends a file that is still arriving when the user cancels', async () => {
+    const harness = await startReceiver()
+    const bytes = Buffer.alloc(1024, 7)
+    const pending = prepare(harness, offer([fileOf('a', 'big.bin', bytes)]))
+    const row = await waitForTransfer(harness)
+    harness.registry.decide(row.id, { kind: 'acceptAll' })
+    const answered = await pending
+    const body = await answered.json() as { sessionId: string; files: Record<string, string> }
+
+    // A body that sends one chunk and then goes quiet. This is the sender a user
+    // is most likely to be cancelling, and the one a check performed only between
+    // chunks would wait on forever.
+    const stalled = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array(bytes)) },
+    })
+    const upload = fetch(
+      `${urlOf(harness, 'upload')}?sessionId=${body.sessionId}&fileId=a&token=${body.files['a'] as string}`,
+      {
+        method: 'POST',
+        body: stalled,
+        duplex: 'half',
+      } as RequestInit & { readonly duplex: 'half' },
+    )
+    // Long enough for the first chunk to have been written and the read loop to
+    // be parked on the second, which is the state under test.
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(harness.server.cancelSession(body.sessionId)).toBe(true)
+
+    const response = await upload
+    expect(response.status).toBe(STATUS.conflict)
+    expect(harness.registry.get(body.sessionId)?.status).toBe('canceled')
+    const { readdirSync } = await import('node:fs')
+    // Nothing half-written is left behind for the next start to find, and no
+    // complete-looking file appears for a transfer that never finished.
+    expect(readdirSync(harness.inbox).filter(name => name !== '.partial')).toEqual([])
+    expect(readdirSync(join(harness.inbox, '.partial'))).toEqual([])
   })
 })
 

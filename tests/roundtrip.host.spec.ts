@@ -10,11 +10,19 @@
  * @module dsh-local-send/tests/roundtrip
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createReadStream, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { offerIdsFor, sendPaths, type OutboundPeer } from '../src/outbound.ts'
+import {
+  metadataForUpload,
+  offerIdsFor,
+  offerToPeer,
+  openRow,
+  sendPaths,
+  uploadStream,
+  type OutboundPeer,
+} from '../src/outbound.ts'
 import { LocalSendServer } from '../src/server.ts'
 import { DEFAULT_CONFIG, ensureDirectories, storePaths, type LocalSendConfig } from '../src/store.ts'
 import { TransferRegistry } from '../src/transfer.ts'
@@ -319,6 +327,37 @@ describe('sendPaths against a live receiver', () => {
     expect(written).toEqual(['report (1).pdf', 'report.pdf'])
     const contents = written.map(name => readFileSync(join(receiver.inbox, name), 'utf8')).sort()
     expect(contents).toEqual(['one', 'two'])
+  })
+
+  it('abandons an upload whose transfer the user has stopped', async () => {
+    const receiver = await startReceiver()
+    const registry = new TransferRegistry()
+    const source = join(receiver.home, 'stopped.txt')
+    writeFileSync(source, 'never sent')
+
+    // Offered first, so the row and its upload tokens exist before anything is
+    // pushed. That is what lets the cancel land before the first byte instead of
+    // racing the socket, which would make this test say something different on
+    // every machine.
+    const roster = offerIdsFor([source]).map(entry =>
+      metadataForUpload(entry.id, entry.fileName, 10))
+    const transferId = openRow(receiver.peer, roster, registry)
+    const prepared = await offerToPeer(receiver.peer, transferId, roster, SENDER, registry)
+    expect('refused' in prepared).toBe(false)
+    if ('refused' in prepared) return
+
+    registry.cancel(transferId)
+    await expect(
+      uploadStream(prepared, 'f1', createReadStream(source), registry),
+    ).rejects.toThrow('the transfer was stopped')
+
+    // The row keeps the user's own decision. The abandoned upload reports back
+    // through the same path a transport failure takes, and without the guard
+    // that failure would overwrite the cancel and blame the network for it.
+    expect(registry.get(transferId)?.status).toBe('canceled')
+    expect(registry.get(transferId)?.files[0]?.status).toBe('declined')
+    const { readdirSync } = await import('node:fs')
+    expect(readdirSync(receiver.inbox).filter(name => name !== '.partial')).toEqual([])
   })
 })
 

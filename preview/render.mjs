@@ -52,10 +52,44 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
  * `dls-panel` alone would find the CSS and call a blank page a success.
  */
 const SHOTS = [
-  { scene: 'busy', theme: 'light', name: 'panel-light', expect: ['class="[^"]*dls-panel'] },
+  { scene: 'busy', theme: 'light', name: 'panel-light', expect: ['class="[^"]*dls-panel', '停止'] },
   { scene: 'busy', theme: 'dark', name: 'panel-dark', expect: ['class="[^"]*dls-panel'] },
   { scene: 'empty', theme: 'light', name: 'empty-light', expect: ['class="[^"]*dls-panel', 'dls-emptyTitle'] },
-  { scene: 'incoming', theme: 'dark', name: 'incoming-dark', expect: ['class="[^"]*dls-panel', 'dls-incoming'] },
+  {
+    scene: 'incoming',
+    theme: 'dark',
+    name: 'incoming-dark',
+    expect: ['class="[^"]*dls-panel', 'dls-incoming', 'type="checkbox"', 'dls-pickBar'],
+  },
+  // The companion's postures, which is the one drawing an assertion cannot
+  // judge: `data-fish-mood` proves the right one is mounted, and the picture is
+  // what says whether it looks like a fish. There is no idle entry here on
+  // purpose — an idle companion is not drawn at all, so asserting for it would
+  // be asserting for a state that does not exist.
+  {
+    only: 'fish',
+    scene: 'incoming',
+    theme: 'light',
+    name: 'fish-light',
+    expect: [
+      'class="[^"]*dls-buddy',
+      'data-fish-mood="offered"',
+      'data-fish-mood="moving"',
+      'data-fish-mood="landed"',
+      'data-fish-mood="lost"',
+      'dlsFishRing',
+    ],
+  },
+  // The banner alone: it is the strip that sits between the reader and what they
+  // were about to send, so it is worth seeing on its own rather than inferring
+  // it from the composer's surroundings.
+  {
+    only: 'banner',
+    scene: 'incoming',
+    theme: 'light',
+    name: 'banner-light',
+    expect: ['class="[^"]*dls-banner', '接收', '拒绝'],
+  },
   {
     scene: 'incoming',
     theme: 'light',
@@ -70,9 +104,29 @@ const SHOTS = [
     toast: true,
     expect: ['class="[^"]*dls-panel', 'role="alert"', '共 11.0 MB'],
   },
-  { scene: 'received', theme: 'light', name: 'received-light', expect: ['class="[^"]*dls-panel', 'dls-row'] },
+  // The two actions a settled transfer can still carry: a failed send that can
+  // be repeated, and a batch that can be referenced.
+  {
+    scene: 'received',
+    theme: 'light',
+    name: 'received-light',
+    expect: ['class="[^"]*dls-panel', 'dls-row', '重试', '加入会话'],
+  },
   { scene: 'blocked', theme: 'dark', name: 'blocked-dark', expect: ['class="[^"]*dls-panel', 'dls-note'] },
 ]
+
+/**
+ * The query string one capture loads.
+ *
+ * @param shot - the scene, palette, and whether to mount a surface on its own.
+ * @returns the query, including the leading `?`.
+ */
+function queryOf(shot) {
+  const parts = [`scene=${shot.scene}`, `theme=${shot.theme}`]
+  if (shot.toast === true) parts.push('toast=1')
+  if (shot.only !== undefined) parts.push(`only=${shot.only}`)
+  return `?${parts.join('&')}`
+}
 
 /** Read the Harness theme sheets, or explain which one is missing. */
 function themeCss() {
@@ -173,8 +227,7 @@ async function servePreview() {
  * @returns the serialized document.
  */
 async function documentOf(origin, shot) {
-  const toast = shot.toast === true ? '&toast=1' : ''
-  const url = `${origin}/index.html?scene=${shot.scene}&theme=${shot.theme}${toast}`
+  const url = `${origin}/index.html${queryOf(shot)}`
   const child = spawn(CHROME, [
     '--headless',
     '--disable-gpu',
@@ -236,8 +289,7 @@ function problemsWith(shot, html) {
  * @returns the path written.
  */
 async function shoot(origin, shot) {
-  const toast = shot.toast === true ? '&toast=1' : ''
-  const url = `${origin}/index.html?scene=${shot.scene}&theme=${shot.theme}${toast}`
+  const url = `${origin}/index.html${queryOf(shot)}`
   const target = join(OUT, `${shot.name}.png`)
   rmSync(target, { force: true })
 

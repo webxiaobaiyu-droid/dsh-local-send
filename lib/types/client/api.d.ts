@@ -9,7 +9,7 @@
  *
  * @module dsh-local-send/client/api
  */
-import { type DecideRequest, type LocalSendState, type PathCandidate, type PrepareSendRequest, type PrepareSendResponse, type SendPathsRequest, type SendPathsResponse } from '../types.ts';
+import { type CancelTransferRequest, type DecideRequest, type LocalSendState, type PathCandidate, type PrepareSendRequest, type PrepareSendResponse, type RetryTransferRequest, type RetryTransferResponse, type SendPathsRequest, type SendPathsResponse } from '../types.ts';
 /** A request that failed, carrying the host's own words when it had any. */
 export declare class HostError extends Error {
     readonly status?: number | undefined;
@@ -48,12 +48,29 @@ export declare function streamFile(transferId: string, fileId: string, file: Fil
 export declare function sendPaths(request: SendPathsRequest): Promise<SendPathsResponse>;
 /**
  * Answer an incoming offer.
+ *
+ * `fileIds` is left absent when the surface answering had no file list to show —
+ * a notification with a single Accept button — which the host reads as "every
+ * file its own limits left standing". An empty array means the user unticked
+ * everything, and is a refusal rather than an empty transfer.
+ *
  * @param request - the offer and the answer.
  * @returns whether a decision was still pending.
  */
 export declare function decide(request: DecideRequest): Promise<{
     decided: boolean;
 }>;
+/**
+ * Stop a transfer this device is part of.
+ * @param request - the row to stop.
+ */
+export declare function cancelTransfer(request: CancelTransferRequest): Promise<void>;
+/**
+ * Send a settled outgoing transfer again, from its files on this machine.
+ * @param request - the row to send again.
+ * @returns the new row the attempt was recorded as.
+ */
+export declare function retryTransfer(request: RetryTransferRequest): Promise<RetryTransferResponse>;
 /**
  * Rename this device.
  * @param alias - the new name to announce.

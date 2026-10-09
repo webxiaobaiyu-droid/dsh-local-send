@@ -1,6 +1,20 @@
 /**
- * Nearby transfer, browser half: the sidebar entry, the panel it opens, the
- * receive notification, and the composer hook that references a received file.
+ * Nearby transfer, browser half: where the plugin draws, and the actions every
+ * one of those places asks for.
+ *
+ * Six seats, each doing one job:
+ *
+ * - the **sidebar entry** and the **panel** it opens — who is around, what is
+ *   moving, and what arrived;
+ * - the **notification** in the frame-wide overlay — an offer has to reach
+ *   somebody who is not looking at the panel;
+ * - the **context menu** in the same overlay — right-click a file anywhere DSH
+ *   shows one and send it, without visiting the panel at all;
+ * - the **companion** in the conversation header and the **banner** above its
+ *   composer — the transfer's presence while the user is working, which is where
+ *   they are when a file arrives;
+ * - the **composer hook**, which is the only thing that can put a reference into
+ *   the draft.
  *
  * A global panel rather than a settings page: this is a place you go to move a
  * file, and a transfer in progress is not a preference.

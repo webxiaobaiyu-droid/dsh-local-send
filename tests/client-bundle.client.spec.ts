@@ -116,7 +116,14 @@ function moduleTable(): Record<string, unknown> {
       useMemo: (fn: () => unknown) => fn(),
     },
     'react/jsx-runtime': { jsx: () => null, jsxs: () => null, Fragment: null },
-    '@deepseek-ai/dsh-client-ui-primitives': { Toast: () => null },
+    '@deepseek-ai/dsh-client-ui-primitives': {
+      Toast: () => null,
+      // The right-click menu and the companion are built on the product's own
+      // menu — it already carries the keyboard walk, Escape, and focus return —
+      // and the copy action uses its clipboard helper.
+      Menu: () => null,
+      writeClipboard: () => Promise.resolve(true),
+    },
   }
 }
 
@@ -212,14 +219,20 @@ describe('browser half bundle', () => {
     expect(activated.effects).toContain('dsh-local-send: dictionaries')
   })
 
-  it('registers a sidebar entry, a main panel, a notification, and a composer hook', () => {
+  it('registers every seat the plugin draws in', () => {
     const bundle = loadBundle()
     const activated = activate(bundle)
     const names = activated.registrations.map(entry => entry.name)
+    // The panel and the way to it.
     expect(names).toContain('main')
     expect(names).toContain('sidebar.panellist')
-    expect(names).toContain('shell.overlay')
+    // The two overlay cells: the notification, and the right-click menu.
+    expect(names.filter(name => name === 'shell.overlay')).toHaveLength(2)
+    // Where the user arrives at a file: the composer hook, the companion above
+    // it, and the banner over it.
     expect(names).toContain('conversation.input.left')
+    expect(names).toContain('conversation.session.header.utilities')
+    expect(names).toContain('conversation.input.dock')
   })
 
   it('gives the sidebar entry and the panel it opens the same id', () => {
@@ -233,13 +246,16 @@ describe('browser half bundle', () => {
     expect(sidebar?.options['id']).toBe('local-send')
   })
 
-  it('keeps the receive notification in its own overlay cell', () => {
+  it('keeps the notification and the menu in separate overlay cells', () => {
     const bundle = loadBundle()
     const activated = activate(bundle)
-    const overlay = activated.registrations.find(entry => entry.name === 'shell.overlay')
+    const overlays = activated.registrations.filter(entry => entry.name === 'shell.overlay')
+    const ids = overlays.map(entry => entry.options['id'])
     // A fresh id adds a cell beside the shipped ones; reusing one would replace
-    // somebody else's surface.
-    expect(overlay?.options['id']).toBe('local-send.receive-toast')
+    // somebody else's surface. Two ids rather than one, because the notification
+    // and the pointer-anchored menu answer different questions and neither can
+    // be the other's fallback.
+    expect(ids).toEqual(['local-send.notice', 'local-send.context-menu'])
   })
 
   it('declares the dictionary namespace on every localized registration', () => {

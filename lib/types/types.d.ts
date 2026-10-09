@@ -25,8 +25,16 @@ import type { DeviceType, TransferProtocol } from './protocol.ts';
 export type { DeviceType, TransferProtocol };
 /** Which way a transfer's bytes are going. */
 export type TransferDirection = 'incoming' | 'outgoing';
-/** Where one file is in its life. */
-export type FileStatus = 'offered' | 'transferring' | 'done' | 'failed' | 'declined';
+/**
+ * Where one file is in its life.
+ *
+ * `declined` and `skipped` are both "did not arrive" and are deliberately not
+ * the same thing: the first is somebody else's answer — the receiving device
+ * refused it, or this device's own limits screened it out — while the second is
+ * the user's own, made by leaving the file unticked. Only the first is a loss,
+ * which is why the two are counted apart when a transfer's outcome is settled.
+ */
+export type FileStatus = 'offered' | 'transferring' | 'done' | 'failed' | 'declined' | 'skipped';
 /**
  * Where a whole transfer is.
  *
@@ -86,6 +94,16 @@ export interface TransferRow {
     readonly updatedAt: number;
     /** Why the transfer failed, when it did. */
     readonly error?: string;
+    /**
+     * Whether this transfer can be sent again.
+     *
+     * Added by the host when it serializes state rather than held on the registry
+     * row, because only the host knows: a retry re-reads the source files, so it
+     * is possible exactly when the bytes came from paths on this machine and are
+     * still there. A file dropped on the panel was a live request body that no
+     * longer exists, which is a fact about that request and not about the row.
+     */
+    readonly canRetry?: boolean;
 }
 /** One device seen on the LAN, as the panel draws it. */
 export interface PeerRow {
@@ -234,6 +252,21 @@ export interface SendPathsRequest {
 export interface SendPathsResponse {
     /** Registry row the transfer was recorded as. */
     readonly transferId: string;
+    /**
+     * Files that reached the other device, by file id.
+     *
+     * Reported rather than left for the next poll because this answer arrives when
+     * the transfer is already over: a caller that wanted to say how it went would
+     * otherwise have to find the row and re-derive the outcome, and the one caller
+     * that needs it — the right-click menu — is gone from the screen before a poll
+     * could come back.
+     */
+    readonly sent: readonly string[];
+    /** Files that did not arrive, by file id, with the reason to show. */
+    readonly failed: readonly {
+        readonly id: string;
+        readonly reason: string;
+    }[];
 }
 /** Body of the route that answers an incoming offer. */
 export interface DecideRequest {
@@ -241,6 +274,37 @@ export interface DecideRequest {
     readonly transferId: string;
     /** Whether to accept it. */
     readonly accept: boolean;
+    /**
+     * Which files to take, when accepting.
+     *
+     * Absent means every file the receiver's own limits left standing, which is
+     * what a one-click "accept" on a notification sends — that surface has no file
+     * list on it. An empty array means the user unticked everything, and is
+     * therefore a refusal rather than an empty transfer.
+     */
+    readonly fileIds?: readonly string[];
+}
+/** Body of the route that stops a transfer the user no longer wants. */
+export interface CancelTransferRequest {
+    /** The registry row to stop. */
+    readonly transferId: string;
+}
+/** Body of the route that re-sends a settled outgoing transfer. */
+export interface RetryTransferRequest {
+    /** The registry row to send again. */
+    readonly transferId: string;
+}
+/** Answer to a retry: the new row the attempt was recorded as. */
+export interface RetryTransferResponse {
+    /**
+     * The new registry row.
+     *
+     * A retry is a new attempt rather than a resumed one, because the protocol has
+     * no resume: the sender offers again from the beginning and the receiver
+     * decides again. So this is a fresh id, and the row that failed stays in the
+     * history as the record of what happened first.
+     */
+    readonly transferId: string;
 }
 /** Body of the route that renames this device. */
 export interface RenameRequest {
@@ -274,6 +338,10 @@ export declare const STREAM_PATH = "/api/dsh-local-send/stream";
 export declare const SEND_PATHS_PATH = "/api/dsh-local-send/send-paths";
 /** Exact route that accepts or declines an incoming offer. */
 export declare const DECIDE_PATH = "/api/dsh-local-send/decide";
+/** Exact route that stops a transfer the user no longer wants. */
+export declare const CANCEL_PATH = "/api/dsh-local-send/cancel";
+/** Exact route that sends a settled outgoing transfer again. */
+export declare const RETRY_PATH = "/api/dsh-local-send/retry";
 /** Exact route that renames this device. */
 export declare const RENAME_PATH = "/api/dsh-local-send/rename";
 /** Exact route that runs the legacy subnet scan on demand. */

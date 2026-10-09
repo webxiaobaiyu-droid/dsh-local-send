@@ -5,16 +5,21 @@
  * through its injected face, so the component can be rendered against a fixture
  * and the wiring can be tested without one.
  *
- * Two behaviours are worth stating because they are not obvious from the markup:
+ * Behaviours worth stating because they are not obvious from the markup:
  *
  * - **It owns no polling.** The state arrives from a shared store that the
- *   receive notification also reads, and the panel merely retains it while
- *   mounted. See `state.ts` for why the cadence follows the host's own work.
- * - **A drop lands on a device, not on the panel.** The tiles are the drop
- *   targets, and the panel only dims what cannot receive while a drag is in
- *   flight. Dragging is reported with a counter rather than a boolean because
- *   `dragleave` fires when the pointer crosses into a child element, so a
- *   boolean would flicker the whole panel on every internal boundary.
+ *   notification and the companion also read, and the panel merely retains it
+ *   while mounted. See `state.ts` for why the cadence follows the host's own work.
+ * - **A drop lands on a device, and anywhere else on the panel.** The tiles are
+ *   the precise targets, but dropping onto empty space used to do nothing at all,
+ *   which is indistinguishable from the panel being broken — so a drop anywhere
+ *   is staged, and sent straight away when there is exactly one device it could
+ *   possibly mean. The counter that tracks dragging exists because `dragleave`
+ *   fires when the pointer crosses into a child element, so a boolean would
+ *   flicker the whole panel on every internal boundary.
+ * - **A received file is offered to the conversation, not committed to it.** The
+ *   "add" action leaves a reference for the composer to insert; whether to send
+ *   is still the user's.
  *
  * @module dsh-local-send/client/LocalSendPanel
  */
@@ -25,6 +30,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type DragEvent,
   type ReactNode,
 } from 'react'
@@ -34,6 +40,7 @@ import {
   type LocalSendState,
   type PathCandidate,
   type PeerRow,
+  type SendPathsResponse,
   type StateWarning,
   type TransferFileRow,
   type TransferRow,
@@ -52,21 +59,32 @@ export interface LocalSendPanelInjected {
   /**
    * The shared state store.
    *
-   * Shared rather than owned, because the receive notification reads the same
-   * document from a different mount point; one loop serves both.
+   * Shared rather than owned, because the notification reads the same document
+   * from a different mount point; one loop serves both.
    */
   store: TransferStore
   /** Offer browser-held files to a peer and stream them. */
   sendFiles: (peer: string, files: readonly File[]) => Promise<void>
-  /** Offer paths that already exist on this machine. */
-  sendLocalPaths: (peer: string, paths: readonly string[]) => Promise<void>
-  /** Answer an incoming offer. */
-  answer: (transferId: string, accept: boolean) => Promise<void>
+  /**
+   * Offer paths that already exist on this machine.
+   *
+   * The outcome comes back with the answer rather than through the next poll,
+   * because the host runs a path send to completion before it responds: by then
+   * the transfer is over, and the panel puts the figures on screen at once
+   * instead of one poll behind.
+   */
+  sendLocalPaths: (peer: string, paths: readonly string[]) => Promise<SendPathsResponse>
+  /** Answer an incoming offer, optionally taking only some of its files. */
+  answer: (transferId: string, accept: boolean, fileIds?: readonly string[]) => Promise<void>
+  /** Stop a transfer this device is part of, in either direction. */
+  cancel: (transferId: string) => Promise<void>
+  /** Send a settled outgoing transfer again, from its files on this machine. */
+  retry: (transferId: string) => Promise<void>
   /** Rename this device and persist the name. */
   renameDevice: (alias: string) => Promise<void>
   /** Run the legacy subnet scan. */
   scanNow: () => Promise<{ found: number }>
-  /** Show a received file in the platform's file manager. */
+  /** Show a received file — or the inbox itself — in the file manager. */
   revealFile: (path: string) => Promise<void>
   /** Ask the host what it knows about some paths. */
   inspectPaths: (paths: readonly string[]) => Promise<readonly PathCandidate[]>
@@ -77,6 +95,8 @@ export interface LocalSendPanelInjected {
    * conversation's own slot tree, which the main column cannot reach.
    */
   addToConversation: (path: string) => void
+  /** Whether a conversation is open for a reference to land in. */
+  hasSession: () => boolean
 }
 
 /** Full component props assembled by the main slot renderer. */
@@ -85,8 +105,19 @@ export type LocalSendPanelProps =
   & PropsLocale<'localSend'>
   & InjectFace<LocalSendPanelInjected>
 
+/** One thing the panel has to tell the reader, above the lists. */
+interface Notice {
+  /** The sentence, already resolved against the active locale. */
+  readonly text: string
+  /** How it should read: a result, a caution, or a failure. */
+  readonly tone: 'info' | 'warn' | 'error'
+}
+
 /** Format a count of files against the locale's plural rules. */
-function fileCountLabel(t: (key: LocalSendLocaleKey, params?: Record<string, string | number>) => string, count: number): string {
+function fileCountLabel(
+  t: (key: LocalSendLocaleKey, params?: Record<string, string | number>) => string,
+  count: number,
+): string {
   return count === 1 ? t('filesCountOne') : t('filesCount', { count })
 }
 
@@ -95,16 +126,30 @@ function fileCountLabel(t: (key: LocalSendLocaleKey, params?: Record<string, str
  * @param props - slot props, locale seat, and the injected face.
  */
 export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
-  const { t, store, sendFiles, sendLocalPaths, answer, renameDevice, scanNow, revealFile, inspectPaths, addToConversation } = props
+  const {
+    t, store, sendFiles, sendLocalPaths, answer, cancel, retry,
+    renameDevice, scanNow, revealFile, inspectPaths, addToConversation, hasSession,
+  } = props
   const read = useTransferState(store)
   const [dropTarget, setDropTarget] = useState<string | undefined>(undefined)
   const [dragging, setDragging] = useState(false)
-  const [notice, setNotice] = useState<string | undefined>(undefined)
+  const [notice, setNotice] = useState<Notice | undefined>(undefined)
   const [busyAction, setBusyAction] = useState<string | undefined>(undefined)
   const [renaming, setRenaming] = useState(false)
   const [showPaths, setShowPaths] = useState(false)
+  /**
+   * Files waiting for the user to say which device they are for.
+   *
+   * Held rather than sent because the panel cannot guess: a drop onto empty
+   * space, or a file chosen from the picker, names no device at all. When there
+   * is exactly one device it could possibly mean, `stageFiles` does not stage —
+   * a chooser with a single option is a step that exists only to be dismissed.
+   */
+  const [staged, setStaged] = useState<readonly File[] | undefined>(undefined)
   /** Nested drag depth; see the module note on why this is a counter. */
   const dragDepth = useRef(0)
+  /** The hidden picker the "choose files" button drives. */
+  const picker = useRef<HTMLInputElement>(null)
 
   // The store polls only while somebody is watching, so an open panel is what
   // keeps it alive.
@@ -117,16 +162,40 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
     try {
       await action()
     } catch (error: unknown) {
-      setNotice(describe(error))
+      // Wrapped rather than shown raw: the host's message is the detail, and a
+      // bare "HTTP 409" in a panel that otherwise speaks sentences reads as a
+      // bug rather than as an answer.
+      setNotice({ text: t('errorGeneric', { message: describe(error) }), tone: 'error' })
     } finally {
       setBusyAction(undefined)
     }
-  }, [])
+  }, [t])
 
   /** Re-read immediately, so an action's effect is on screen without waiting a tick. */
   const refresh = useCallback(async (): Promise<void> => {
     await store.refresh()
   }, [store])
+
+  const peers = read.status === 'ready' ? read.state.peers : []
+  const reachable = useMemo(() => peers.filter(peer => peer.reachable), [peers])
+
+  /**
+   * Take files the user did not aim at a particular device.
+   *
+   * @param files - the files, from a drop on empty space or from the picker.
+   */
+  const stageFiles = useCallback((files: readonly File[]): void => {
+    if (files.length === 0) return
+    const only = reachable.length === 1 ? reachable[0] : undefined
+    if (only !== undefined) {
+      void run(`send:${only.fingerprint}`, async () => {
+        await sendFiles(only.fingerprint, files)
+        await refresh()
+      })
+      return
+    }
+    setStaged(files)
+  }, [reachable, run, sendFiles, refresh])
 
   const onDragEnter = useCallback((event: DragEvent<HTMLDivElement>): void => {
     if (!hasFiles(event)) return
@@ -149,12 +218,21 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
     event.dataTransfer.dropEffect = 'copy'
   }, [])
 
+  /**
+   * A drop that did not land on a device.
+   *
+   * Staged rather than ignored, because a drop that does nothing looks exactly
+   * like a panel that is not working. See the module note.
+   *
+   * @param event - the drop event.
+   */
   const onDrop = useCallback((event: DragEvent<HTMLDivElement>): void => {
     event.preventDefault()
     dragDepth.current = 0
     setDragging(false)
     setDropTarget(undefined)
-  }, [])
+    stageFiles([...event.dataTransfer.files])
+  }, [stageFiles])
 
   const dropOn = useCallback((peer: PeerRow, event: DragEvent<HTMLElement>): void => {
     event.preventDefault()
@@ -198,6 +276,15 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
                 <button
                   type="button"
                   className="dls-action"
+                  data-tone="primary"
+                  disabled={busyAction !== undefined}
+                  onClick={() => { picker.current?.click() }}
+                >
+                  {t('sendFiles')}
+                </button>
+                <button
+                  type="button"
+                  className="dls-action"
                   data-tone="quiet"
                   disabled={busyAction !== undefined}
                   onClick={() => { setShowPaths(value => !value) }}
@@ -211,19 +298,56 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
                   onClick={() => {
                     void run('scan', async () => {
                       const result = await scanNow()
-                      setNotice(result.found > 0 ? t('scanFound', { count: result.found }) : t('scanEmpty'))
+                      setNotice({
+                        text: result.found > 0 ? t('scanFound', { count: result.found }) : t('scanEmpty'),
+                        tone: 'info',
+                      })
                     })
                   }}
                 >
                   <SearchIcon size={13} />
                   {busyAction === 'scan' ? t('scanning') : t('rescan')}
                 </button>
+                <button
+                  type="button"
+                  className="dls-action"
+                  data-tone="quiet"
+                  title={t('openInbox')}
+                  aria-label={t('openInbox')}
+                  disabled={busyAction !== undefined}
+                  onClick={() => {
+                    void run('inbox', async () => {
+                      if (read.status !== 'ready') return
+                      await revealFile(read.state.inbox)
+                    })
+                  }}
+                >
+                  <FolderIcon size={13} />
+                </button>
               </div>
             )
             : null}
         </header>
 
-        {read.status === 'loading' ? <p className="dls-note">{t('scanning')}</p> : null}
+        {/* The picker is never shown: the button above drives it, because a bare
+            file input cannot be styled to match anything. It stays in the tree so
+            that clicking it is a real user gesture, which is what opens the
+            platform's dialog. */}
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          className="dls-picker"
+          onChange={(event: ChangeEvent<HTMLInputElement>) => {
+            stageFiles([...event.target.files ?? []])
+            // Cleared so choosing the same file twice in a row still reports a
+            // change; an input that kept its value would fire nothing the second
+            // time.
+            event.target.value = ''
+          }}
+        />
+
+        {read.status === 'loading' ? <p className="dls-note">{t('loading')}</p> : null}
 
         {read.status === 'error'
           ? (
@@ -259,7 +383,41 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
           ? <p className="dls-note" data-tone="warn">{warningText(t, read.state.warning)}</p>
           : null}
 
-        {notice !== undefined ? <p className="dls-note">{notice}</p> : null}
+        {notice !== undefined
+          ? (
+            <p className="dls-note" data-tone={notice.tone}>
+              <span>{notice.text}</span>
+              <button
+                type="button"
+                className="dls-action"
+                data-tone="quiet"
+                onClick={() => { setNotice(undefined) }}
+              >
+                {t('dismiss')}
+              </button>
+            </p>
+          )
+          : null}
+
+        {staged !== undefined
+          ? (
+            <StagedFiles
+              files={staged}
+              peers={reachable}
+              busy={busyAction !== undefined}
+              t={t}
+              onCancel={() => { setStaged(undefined) }}
+              onSend={(peer) => {
+                const files = staged
+                setStaged(undefined)
+                void run(`send:${peer}`, async () => {
+                  await sendFiles(peer, files)
+                  await refresh()
+                })
+              }}
+            />
+          )
+          : null}
 
         {incoming.map(transfer => (
           <IncomingOffer
@@ -267,9 +425,9 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
             transfer={transfer}
             busy={busyAction === `answer:${transfer.id}`}
             t={t}
-            onAnswer={(accept) => {
+            onAnswer={(accept, fileIds) => {
               void run(`answer:${transfer.id}`, async () => {
-                await answer(transfer.id, accept)
+                await answer(transfer.id, accept, fileIds)
                 await refresh()
               })
             }}
@@ -319,9 +477,31 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
               busyAction={busyAction}
               t={t}
               now={Date.now()}
-              onAddToConversation={addToConversation}
+              onAddToConversation={(path) => {
+                // Warned here rather than after the switch, because the switch is
+                // the problem: the centre column would go to a blank-session
+                // screen and the reference would sit parked with nothing on
+                // screen to explain it.
+                if (!hasSession()) {
+                  setNotice({ text: t('noSession'), tone: 'warn' })
+                  return
+                }
+                addToConversation(path)
+              }}
               onReveal={(path) => {
                 void run(`reveal:${path}`, async () => { await revealFile(path) })
+              }}
+              onStop={(transferId) => {
+                void run(`stop:${transferId}`, async () => {
+                  await cancel(transferId)
+                  await refresh()
+                })
+              }}
+              onRetry={(transferId) => {
+                void run(`retry:${transferId}`, async () => {
+                  await retry(transferId)
+                  await refresh()
+                })
               }}
             />
           )
@@ -411,6 +591,70 @@ function ThisDevice(
                 {address === undefined ? t('noAddress') : `${address}:${String(state.device.port)}`}
               </span>
             </span>
+            {/* Where received files go, said once and in full. It is a real
+                directory the agent can be pointed at, and a user who has just
+                been told a file arrived needs to know where. */}
+            <span className="dls-fact">
+              <span className="dls-factKey">{t('inboxLabel')}</span>
+              <span className="dls-factValue" title={state.inbox}>{state.inbox}</span>
+            </span>
+          </div>
+        )}
+    </section>
+  )
+}
+
+/**
+ * Files waiting for a device to be named.
+ *
+ * Shown instead of guessing whenever a drop or a pick could mean more than one
+ * device. The devices are buttons rather than a select, because there is exactly
+ * one decision to make here and a select would hide it behind a second press.
+ */
+function StagedFiles(
+  { files, peers, busy, t, onCancel, onSend }: {
+    readonly files: readonly File[]
+    readonly peers: readonly PeerRow[]
+    readonly busy: boolean
+    readonly t: Translate
+    readonly onCancel: () => void
+    readonly onSend: (fingerprint: string) => void
+  },
+): ReactNode {
+  const bytes = files.reduce((sum, file) => sum + file.size, 0)
+  return (
+    <section className="dls-section dls-staged">
+      <div className="dls-sectionHead">
+        <span className="dls-sectionTitle">
+          {t('sendFiles')}
+          <span className="dls-count">{fileCountLabel(t, files.length)}</span>
+        </span>
+        <span className="dls-rowActions">
+          <button type="button" className="dls-action" data-tone="quiet" disabled={busy} onClick={onCancel}>
+            {t('cancel')}
+          </button>
+        </span>
+      </div>
+      <p className="dls-note">{t('incomingTotal', { size: formatBytes(bytes) })}</p>
+      {peers.length === 0
+        ? <p className="dls-note" data-tone="warn">{t('noPeers')}</p>
+        : (
+          <div className="dls-peers">
+            {peers.map(peer => (
+              <button
+                key={peer.fingerprint}
+                type="button"
+                className="dls-tile"
+                disabled={busy}
+                onClick={() => { onSend(peer.fingerprint) }}
+              >
+                <span className="dls-tileMark"><DeviceIcon type={peer.deviceType} size={18} /></span>
+                <span className="dls-tileBody">
+                  <span className="dls-tileName">{peer.alias}</span>
+                  <span className="dls-tileMeta">{deviceTypeLabel(t, peer.deviceType)} · {peer.address}</span>
+                </span>
+              </button>
+            ))}
           </div>
         )}
     </section>
@@ -506,15 +750,51 @@ function deviceTypeLabel(t: Translate, type: PeerRow['deviceType']): string {
   return t(key)
 }
 
-/** An offer waiting on the reader. */
+/**
+ * An offer waiting on the reader, file by file.
+ *
+ * The tick boxes are the reason this is a component rather than a paragraph: the
+ * protocol carries a per-file decision and the panel is where it is made, so a
+ * batch of twenty holiday photos does not force the user to take the one
+ * document they did not want. Everything this device's own limits already
+ * refused is listed without a box, because there is nothing left to decide.
+ */
 function IncomingOffer(
   { transfer, busy, t, onAnswer }: {
     readonly transfer: TransferRow
     readonly busy: boolean
     readonly t: Translate
-    readonly onAnswer: (accept: boolean) => void
+    readonly onAnswer: (accept: boolean, fileIds?: readonly string[]) => void
   },
 ): ReactNode {
+  const selectable = transfer.files.filter(file => file.status === 'offered')
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(
+    () => new Set(selectable.map(file => file.id)),
+  )
+  const all = selectable.length > 0 && chosen.size === selectable.length
+  const none = chosen.size === 0
+
+  const toggle = (id: string): void => {
+    setChosen((previous) => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  /**
+   * Hand the decision up.
+   *
+   * Every file ticked is sent as `undefined` rather than as the full list: the
+   * host has a word for "all of them" that does not depend on the panel and the
+   * host agreeing about which ids exist, and this is the case it exists for.
+   */
+  const submit = (): void => {
+    if (none) return
+    onAnswer(true, all ? undefined : [...chosen])
+  }
+
   const count = transfer.files.length
   return (
     <section className="dls-incoming">
@@ -530,24 +810,78 @@ function IncomingOffer(
             type="button"
             className="dls-action"
             data-tone="primary"
-            disabled={busy}
-            onClick={() => { onAnswer(true) }}
+            disabled={busy || none}
+            onClick={submit}
           >
-            {t('accept')}
+            {t('acceptSelected', { count: chosen.size })}
           </button>
           <button type="button" className="dls-action" disabled={busy} onClick={() => { onAnswer(false) }}>
             {t('decline')}
           </button>
         </span>
       </div>
+
+      {selectable.length > 1
+        ? (
+          <div className="dls-pickBar">
+            <span className="dls-note">{t('selectedOf', { count: chosen.size, total: selectable.length })}</span>
+            <button
+              type="button"
+              className="dls-action"
+              data-tone="quiet"
+              disabled={busy || all}
+              onClick={() => { setChosen(new Set(selectable.map(file => file.id))) }}
+            >
+              {t('selectAll')}
+            </button>
+            <button
+              type="button"
+              className="dls-action"
+              data-tone="quiet"
+              disabled={busy || none}
+              onClick={() => { setChosen(new Set()) }}
+            >
+              {t('selectNone')}
+            </button>
+          </div>
+        )
+        : null}
+
       <ul className="dls-incomingFiles">
-        {transfer.files.map(file => (
-          <li key={file.id} className="dls-incomingFile">
-            <span className="dls-incomingName">{shortenFileName(file.fileName, 64)}</span>
-            <span className="dls-incomingSize">{formatBytes(file.size)}</span>
-          </li>
-        ))}
+        {transfer.files.map((file) => {
+          const offered = file.status === 'offered'
+          return (
+            <li key={file.id} className="dls-incomingFile">
+              {offered
+                ? (
+                  <label className="dls-tick">
+                    <input
+                      type="checkbox"
+                      checked={chosen.has(file.id)}
+                      disabled={busy}
+                      onChange={() => { toggle(file.id) }}
+                    />
+                    <span className="dls-incomingName">{shortenFileName(file.fileName, 64)}</span>
+                  </label>
+                )
+                : (
+                  <span className="dls-incomingName" data-tone="muted">
+                    {shortenFileName(file.fileName, 64)}
+                  </span>
+                )}
+              <span className="dls-incomingSize">
+                {offered
+                  ? formatBytes(file.size)
+                  : file.error ?? t(`fileStatus.${file.status}` as LocalSendLocaleKey)}
+              </span>
+            </li>
+          )
+        })}
       </ul>
+
+      {none && selectable.length > 0
+        ? <p className="dls-note" data-tone="warn">{t('noFileSelected')}</p>
+        : null}
     </section>
   )
 }
@@ -633,13 +967,15 @@ function PathsSender(
 
 /** Every transfer this session has seen. */
 function Transfers(
-  { transfers, busyAction, t, now, onAddToConversation, onReveal }: {
+  { transfers, busyAction, t, now, onAddToConversation, onReveal, onStop, onRetry }: {
     readonly transfers: readonly TransferRow[]
     readonly busyAction: string | undefined
     readonly t: Translate
     readonly now: number
     readonly onAddToConversation: (path: string) => void
     readonly onReveal: (path: string) => void
+    readonly onStop: (transferId: string) => void
+    readonly onRetry: (transferId: string) => void
   },
 ): ReactNode {
   return (
@@ -669,6 +1005,8 @@ function Transfers(
                 now={now}
                 onAddToConversation={onAddToConversation}
                 onReveal={onReveal}
+                onStop={onStop}
+                onRetry={onRetry}
               />
             ))}
           </div>
@@ -691,23 +1029,29 @@ function Transfers(
  * asks: which file (or how many), how it went, how much, and when.
  */
 function TransferLine(
-  { transfer, busyAction, t, now, onAddToConversation, onReveal }: {
+  { transfer, busyAction, t, now, onAddToConversation, onReveal, onStop, onRetry }: {
     readonly transfer: TransferRow
     readonly busyAction: string | undefined
     readonly t: Translate
     readonly now: number
     readonly onAddToConversation: (path: string) => void
     readonly onReveal: (path: string) => void
+    readonly onStop: (transferId: string) => void
+    readonly onRetry: (transferId: string) => void
   },
 ): ReactNode {
   const incoming = transfer.direction === 'incoming'
   const [open, setOpen] = useState(false)
-  const settled = transfer.status !== 'transferring' && transfer.status !== 'awaiting'
+  const live = transfer.status === 'transferring' || transfer.status === 'awaiting'
+  const settled = !live
   const percent = percentOf(transfer.bytesDone, transfer.bytesTotal)
   const single = transfer.files.length === 1 ? transfer.files[0] : undefined
   const done = transfer.status === 'done' || transfer.status === 'partial'
   /** Received files that are on disk, which are the ones worth referencing. */
   const saved = transfer.files.filter(file => file.status === 'done' && file.savedPath !== undefined)
+  /** A retry is only possible when the host still has the source files. */
+  const retryable = settled && transfer.status !== 'done' && transfer.canRetry === true
+  const busy = busyAction !== undefined
 
   const meta = useMemo(() => {
     const parts: string[] = []
@@ -792,6 +1136,37 @@ function TransferLine(
           )
           : null}
 
+        {/* Stopping is offered while there is still something to stop. A row
+            that is already over has nothing for this button to do, and hiding it
+            is what keeps the outcome row's actions to the ones that still mean
+            something. */}
+        {live
+          ? (
+            <button
+              type="button"
+              className="dls-action"
+              disabled={busy}
+              onClick={() => { onStop(transfer.id) }}
+            >
+              {t('stopTransfer')}
+            </button>
+          )
+          : null}
+
+        {retryable
+          ? (
+            <button
+              type="button"
+              className="dls-action"
+              title={t('retryTransferHint')}
+              disabled={busy}
+              onClick={() => { onRetry(transfer.id) }}
+            >
+              {t('retryTransfer')}
+            </button>
+          )
+          : null}
+
         {/* The panel's whole reason for existing: a received file the
             conversation can then read. Offered directly on a single-file row,
             and through the file list on a batch, so twenty files do not put
@@ -802,7 +1177,7 @@ function TransferLine(
               type="button"
               className="dls-action"
               data-tone="primary"
-              disabled={busyAction !== undefined}
+              disabled={busy}
               title={t('addToConversationHint')}
               onClick={() => {
                 if (single?.savedPath !== undefined) onAddToConversation(single.savedPath)
@@ -822,7 +1197,7 @@ function TransferLine(
               data-tone="quiet"
               title={t('reveal')}
               aria-label={t('reveal')}
-              disabled={busyAction !== undefined}
+              disabled={busy}
               onClick={() => { onReveal(single.savedPath as string) }}
             >
               <FolderIcon size={13} />

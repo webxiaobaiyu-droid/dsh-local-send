@@ -18,7 +18,19 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import { apply, inject, name } from '../src/index.ts'
-import { STATE_PATH } from '../src/types.ts'
+import {
+  CANCEL_PATH,
+  DECIDE_PATH,
+  INSPECT_PATH,
+  PREPARE_PATH,
+  RENAME_PATH,
+  RETRY_PATH,
+  REVEAL_PATH,
+  SCAN_PATH,
+  SEND_PATHS_PATH,
+  STATE_PATH,
+  STREAM_PATH,
+} from '../src/types.ts'
 
 /**
  * A port well away from the protocol's own.
@@ -106,8 +118,25 @@ function activate(config: Record<string, unknown> = {}): Activation {
   return activation
 }
 
-describe('host half activation', () => {
-  it('exports the name and the injection list the Loader reads', () => {
+/**
+ * POST a JSON body to one registered route, the way the panel's own client does.
+ *
+ * @param activation - the activated plugin.
+ * @param path - route to call.
+ * @param body - value to serialize as the body.
+ * @returns the route's response.
+ */
+async function post(activation: Activation, path: string, body: unknown): Promise<Response> {
+  const route = activation.routes.get(path)
+  if (route === undefined) throw new Error(`no route registered for ${path}`)
+  return await route.fetch(new Request(`http://127.0.0.1${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+describe('host half activation', () => {  it('exports the name and the injection list the Loader reads', () => {
     expect(name).toBe('dsh-local-send')
     // The routes cannot be registered without the carrier, so it is a hard
     // dependency rather than one read reflectively.
@@ -116,7 +145,49 @@ describe('host half activation', () => {
 
   it('activates and registers every route the panel calls', () => {
     const activation = activate({ port: TEST_PORT })
-    expect([...activation.routes.keys()]).toContain(STATE_PATH)
+    // Every one of them, listed rather than sampled: a route the module forgot
+    // to register is a control in the panel that does nothing, and the failure
+    // is silent on both sides.
+    for (const path of [
+      STATE_PATH, PREPARE_PATH, STREAM_PATH, SEND_PATHS_PATH, DECIDE_PATH,
+      CANCEL_PATH, RETRY_PATH, RENAME_PATH, SCAN_PATH, REVEAL_PATH, INSPECT_PATH,
+    ]) {
+      expect([...activation.routes.keys()]).toContain(path)
+    }
+  })
+
+  it('refuses a decision whose file list is not a list of ids', async () => {
+    const activation = activate({ port: TEST_PORT })
+    const response = await post(activation, DECIDE_PATH, { transferId: 'x', accept: true, fileIds: [1, 2] })
+    // This is the one route where the panel's own body decides what gets
+    // written to disk, so its shape is checked before the decision is allowed
+    // near the registry.
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'fileIds must be a list of file ids' })
+  })
+
+  it('answers a decision for an offer that is no longer waiting', async () => {
+    const activation = activate({ port: TEST_PORT })
+    const response = await post(activation, DECIDE_PATH, { transferId: 'gone', accept: true })
+    // Not a failure: the panel's view was one poll behind, and the honest answer
+    // is that there was nothing left to decide.
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ decided: false })
+  })
+
+  it('refuses to cancel a transfer it does not have', async () => {
+    const activation = activate({ port: TEST_PORT })
+    const response = await post(activation, CANCEL_PATH, { transferId: 'gone' })
+    expect(response.status).toBe(404)
+  })
+
+  it('refuses to resend a transfer whose bytes it no longer has', async () => {
+    const activation = activate({ port: TEST_PORT })
+    const response = await post(activation, RETRY_PATH, { transferId: 'gone' })
+    // A file dropped on the panel was a live request body, so there is nothing
+    // left to send again. Saying so now beats a retry that appears to start and
+    // then fails for a reason the user cannot act on.
+    expect(response.status).toBe(409)
   })
 
   it('marks the byte-streaming route as streaming, not buffered', async () => {

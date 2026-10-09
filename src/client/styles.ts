@@ -682,67 +682,253 @@ export const styles = String.raw`
   font-variant-numeric: tabular-nums;
 }
 
-/* The picker opens from the composer, so it is anchored above its button and
- * constrained to the viewport rather than to the panel. */
+/* --------------------------------------------------------- file picker -- */
+
+/* The picker is driven by a button, so the input itself is never shown: a bare
+ * file input cannot be made to match anything else in this product. It stays in
+ * the tree rather than being left out, because opening the platform's dialog
+ * needs a real user gesture and a synthetic click on a detached input is not
+ * reliably one. */
 .dls-picker {
-  position: fixed;
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  box-sizing: border-box;
-  inline-size: min(380px, calc(100vw - 24px));
-  max-block-size: min(340px, 54vh);
-  overflow: auto;
-  padding: 6px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: 11px;
-  background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2));
-  box-shadow: 0 10px 34px var(--dsw-alias-bg-mask-drop);
+  display: none;
 }
 
-.dls-pickerEmpty {
-  padding: 14px 12px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 1.5;
-  text-align: center;
+/* --------------------------------------------------------- staged files -- */
+
+/* Files the user has produced but not yet aimed at a device. Drawn like an
+ * offer, because from the reader's side it is the same situation: something is
+ * waiting on a decision, and here the decision is which device. */
+.dls-staged {
+  padding: 14px 15px;
+  border: 0.5px solid var(--dsw-alias-brand-primary);
+  border-radius: var(--dsw-radius-lg, 12px);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 8%, var(--dsw-alias-bg-layer-1));
 }
 
-.dls-pickerRow {
+/* ----------------------------------------------------------- selection -- */
+
+/* How many of an offer's files are ticked, and the two gestures that answer it
+ * in one press. Right-aligned so it sits under the buttons it belongs to. */
+.dls-pickBar {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px 9px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: start;
+  justify-content: flex-end;
+  margin-block-start: 10px;
+}
+
+.dls-tick {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  min-inline-size: 0;
   cursor: pointer;
 }
 
-.dls-pickerRow:hover,
-.dls-pickerRow:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
-  outline: none;
-}
-
-.dls-pickerName {
-  min-inline-size: 0;
-  overflow: hidden;
-  font-size: 12.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dls-pickerMeta {
+.dls-tick input {
   flex-shrink: 0;
+  accent-color: var(--dsw-alias-brand-primary);
+}
+
+/* A file this device's own limits refused, listed without a box because there
+ * is nothing left to decide about it. */
+.dls-incomingName[data-tone='muted'] {
   color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
+}
+
+/* The dismiss button rides at the end of a note's line, which is already a flex
+ * row — so a note with an action does not grow a second line for one word. */
+.dls-note > .dls-action {
+  margin-inline-start: auto;
+}
+
+/* -------------------------------------------------------------- banner -- */
+
+/* The offer banner, directly above the composer. This is the one strip in the
+ * window that sits between the reader and what they were about to send, so it
+ * stays a single line: who, how much, and the answers. */
+.dls-banner {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+  border: 0.5px solid var(--dsw-alias-state-warn-primary);
+  border-radius: var(--dsw-radius-lg, 12px);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 9%, var(--dsw-alias-bg-layer-1));
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 12.5px;
+}
+
+.dls-bannerMark {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dls-bannerBody {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+  min-inline-size: 0;
+}
+
+.dls-bannerTitle {
+  font-weight: 500;
+}
+
+.dls-bannerMeta {
+  color: var(--dsw-alias-label-tertiary);
   font-variant-numeric: tabular-nums;
+}
+
+.dls-bannerActions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+
+/* ----------------------------------------------------------- companion -- */
+
+/* The fish in the conversation header. Idle it is deliberately quiet: a pet that
+ * shouted while nothing was happening would be a notification with no news, and
+ * the tone attribute is what escalates it. The size is fixed so the header's
+ * other controls do not shift when the mood changes. */
+.dls-buddy {
+  display: grid;
+  place-items: center;
+  inline-size: 26px;
+  block-size: 26px;
+  padding: 0;
+  border: 0.5px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease;
+}
+
+.dls-buddy:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dls-buddy:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.dls-buddy[data-tone='busy'] {
+  color: var(--dsw-alias-brand-text);
+}
+
+.dls-buddy[data-tone='good'] {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.dls-buddy[data-tone='bad'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* The one state that is waiting on a person gets a halo, because it is the only
+ * state where the transfer cannot proceed without the reader. */
+.dls-buddy[data-tone='attention'] {
+  border-color: var(--dsw-alias-state-warn-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);
+  color: var(--dsw-alias-state-warn-primary);
+  animation: dls-buddy-ask 1.9s ease-in-out infinite;
+}
+
+@keyframes dls-buddy-ask {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--dsw-alias-state-warn-primary) 45%, transparent);
+  }
+
+  55% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--dsw-alias-state-warn-primary) 0%, transparent);
+  }
+}
+
+/* The tail is the only part of the fish that moves on its own, which is what
+ * makes the mark read as swimming rather than as a static shape that happens to
+ * have a ring round it. 'fill-box' puts the origin on the tail's own edge. */
+.dlsFishTail {
+  transform-box: fill-box;
+  transform-origin: 100% 50%;
+  animation: dls-fish-tail 2.4s ease-in-out infinite;
+}
+
+/* Faster while bytes are moving: the pace is the progress the ring is also
+ * drawing, said in a second way that needs no reading. */
+.dls-buddy[data-mood='moving'] .dlsFishTail {
+  animation-duration: 0.7s;
+}
+
+@keyframes dls-fish-tail {
+  0%,
+  100% {
+    transform: rotate(-9deg);
+  }
+
+  50% {
+    transform: rotate(9deg);
+  }
+}
+
+.dlsFishRingTrack {
+  opacity: 0.15;
+}
+
+.dlsFishRing {
+  color: var(--dsw-alias-brand-primary);
+  transition: stroke-dashoffset 500ms linear;
+}
+
+.dlsFishBubbles {
+  animation: dls-fish-bubbles 2.2s ease-in-out infinite;
+}
+
+@keyframes dls-fish-bubbles {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0.5px);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateY(-0.8px);
+  }
+}
+
+/* A landed transfer is the one thing worth colouring green, and only for as long
+ * as the companion keeps mentioning it. */
+.dlsFishCheck {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+/* --------------------------------------------------------------- menus -- */
+
+/* The right-click menu's wrapper is inert: the trigger is the pointer, and the
+ * rect the menu is placed from comes from the click rather than from this box.
+ * 'display: contents' keeps it from being a box that could catch a pointer or
+ * add a row to the overlay. */
+.dls-menuAnchor {
+  display: contents;
+}
+
+/* The menu's material is the product's; only the width is ours, so a long device
+ * name wraps rather than stretching the menu across the window. */
+.dls-menu,
+.dls-buddyMenu {
+  min-inline-size: 184px;
+  max-inline-size: 320px;
+  font-family: var(--dsw-font-family);
 }
 
 /* ------------------------------------------------------------ a11y/motion -- */
@@ -761,7 +947,9 @@ export const styles = String.raw`
   .dls-action,
   .dls-row,
   .dls-row::after,
-  .dls-composerButton {
+  .dls-composerButton,
+  .dls-buddy,
+  .dlsFishRing {
     transition: none;
   }
 
@@ -771,6 +959,15 @@ export const styles = String.raw`
 
   .dls-tile[data-drop='true'] {
     transform: none;
+  }
+
+  /* The companion keeps its posture and its ring — those carry information — and
+   * gives up only the motion that carries none. A fish that stopped moving would
+   * still say everything it says. */
+  .dls-buddy[data-tone='attention'],
+  .dlsFishTail,
+  .dlsFishBubbles {
+    animation: none;
   }
 }
 

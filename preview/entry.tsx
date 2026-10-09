@@ -16,9 +16,13 @@
  */
 
 import { createRoot } from 'react-dom/client'
+import type { ReactNode } from 'react'
 import { LocalSendPanel } from '../src/client/LocalSendPanel.tsx'
-import { ReceiveToast } from '../src/client/ReceiveToast.tsx'
-import type { ReceiveToastProps } from '../src/client/ReceiveToast.tsx'
+import { NoticeToast } from '../src/client/NoticeToast.tsx'
+import type { NoticeToastProps } from '../src/client/NoticeToast.tsx'
+import { TransferBanner } from '../src/client/TransferBanner.tsx'
+import type { TransferBannerProps } from '../src/client/TransferBanner.tsx'
+import { FishMark, type FishMood } from '../src/client/fish.tsx'
 import type { LocalSendPanelInjected, LocalSendPanelProps } from '../src/client/LocalSendPanel.tsx'
 import { zh } from '../src/client/locales.ts'
 import type { LocalSendLocaleKey } from '../src/client/locales.ts'
@@ -232,6 +236,9 @@ const SCENES: Record<string, LocalSendState> = {
         peerFingerprint: 'p3',
         peerType: 'mobile',
         error: 'connect ECONNREFUSED 192.168.1.42:53317',
+        // The host only sets this for a send whose bytes came from paths on this
+        // machine, which is exactly the case a retry can work in.
+        canRetry: true,
         files: [
           {
             id: 'f1',
@@ -308,6 +315,15 @@ function toastFace(state: LocalSendState) {
   }
 }
 
+/** The banner's injected face, with every action inert. */
+function bannerFace(state: LocalSendState) {
+  return {
+    store: fixedStore(state),
+    answer: async () => {},
+    openPanel: () => {},
+  }
+}
+
 /** The injected face, with every action inert. */
 function face(state: LocalSendState): LocalSendPanelInjected {
   return {
@@ -315,13 +331,16 @@ function face(state: LocalSendState): LocalSendPanelInjected {
     locale: () => 'zh',
     store: fixedStore(state),
     sendFiles: async () => {},
-    sendLocalPaths: async () => {},
+    sendLocalPaths: async () => ({ transferId: 't1', sent: [], failed: [] }),
     answer: async () => {},
+    cancel: async () => {},
+    retry: async () => {},
     renameDevice: async () => {},
     scanNow: async () => ({ found: 0 }),
     revealFile: async () => {},
     inspectPaths: async () => [],
     addToConversation: () => {},
+    hasSession: () => true,
   }
 }
 
@@ -350,6 +369,105 @@ function reportFailure(label: string, error: unknown): void {
   document.body.appendChild(box)
 }
 
+/**
+ * Every posture of the companion, side by side.
+ *
+ * The one drawing in this plugin that an assertion cannot judge: whether a small
+ * animal reads as that animal at eighteen pixels is a question for an eye, and
+ * this is the only place to put one. Drawn at the real size in its real button,
+ * and again large, because the two failures are different — a fish that is
+ * illegible small is a layout problem, and one that is wrong large is a drawing
+ * problem.
+ *
+ * @returns the board.
+ */
+function FishBoard(): ReactNode {
+  const board: {
+    readonly mood: FishMood
+    readonly tone: string
+    readonly carrying: 'one' | 'many' | 'none'
+    readonly progress?: number
+    readonly note: string
+  }[] = [
+    // No idle posture here, deliberately: an idle companion is off screen rather
+    // than dimmed, and a preview that drew a state the application never reaches
+    // would be answering the wrong question.
+    { mood: 'offered', tone: 'attention', carrying: 'many', note: '有文件等你确认' },
+    // Empty-handed, matching `companionView`: a fish plus a document plus a ring
+    // is three ideas in an eighteen-pixel mark.
+    { mood: 'moving', tone: 'busy', carrying: 'none', progress: 42, note: '传输中 · 42%' },
+    { mood: 'landed', tone: 'good', carrying: 'none', note: '刚刚完成' },
+    { mood: 'lost', tone: 'bad', carrying: 'none', note: '有一次没完成' },
+  ]
+
+  return (
+    <div className="dls-panel">
+      <div className="dls-stack">
+        <header className="dls-header">
+          <div>
+            <h1 className="dls-heading">同伴的五个姿态</h1>
+            <p className="dls-subtitle">情绪的差别全在几何上，没有一处硬编码颜色</p>
+          </div>
+        </header>
+
+        <section className="dls-section">
+          <div className="dls-sectionHead">
+            <span className="dls-sectionTitle">真实尺寸 · 18px 字形，26px 按钮</span>
+          </div>
+          <div className="dls-peers">
+            {board.map(entry => (
+              <div key={entry.mood} className="dls-tile">
+                <span className="dls-tileMark">
+                  <span className="dls-buddy" data-tone={entry.tone} data-mood={entry.mood}>
+                    <FishMark
+                      size={18}
+                      mood={entry.mood}
+                      {...entry.progress === undefined ? {} : { progress: entry.progress }}
+                      carrying={entry.carrying}
+                    />
+                  </span>
+                </span>
+                <span className="dls-tileBody">
+                  <span className="dls-tileName">{entry.mood}</span>
+                  <span className="dls-tileMeta">{entry.note}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="dls-section">
+          <div className="dls-sectionHead">
+            <span className="dls-sectionTitle">放大到 96px，用来判断画得对不对</span>
+          </div>
+          <div className="dls-rowActions" style={{ gap: '20px' }}>
+            {board.map(entry => (
+              <FishMark
+                key={entry.mood}
+                size={96}
+                mood={entry.mood}
+                {...entry.progress === undefined ? {} : { progress: entry.progress }}
+                carrying={entry.carrying}
+              />
+            ))}
+          </div>
+        </section>
+
+        <section className="dls-section">
+          <div className="dls-sectionHead">
+            <span className="dls-sectionTitle">进度环走一整圈</span>
+          </div>
+          <div className="dls-rowActions" style={{ gap: '20px' }}>
+            {[0, 25, 50, 75, 100].map(percent => (
+              <FishMark key={percent} size={96} mood="moving" progress={percent} />
+            ))}
+          </div>
+        </section>
+      </div>
+    </div>
+  )
+}
+
 try {
   const state = SCENES[scene] ?? SCENES['busy'] as LocalSendState
   document.body.toggleAttribute('data-ds-dark-theme', theme === 'dark')
@@ -360,17 +478,22 @@ try {
   document.head.appendChild(tag)
 
   const props = { t: translate, ...face(state) } as unknown as LocalSendPanelProps
-  const toastProps = { t: translate, ...toastFace(state) } as unknown as ReceiveToastProps
+  const toastProps = { t: translate, ...toastFace(state) } as unknown as NoticeToastProps
+  const bannerProps = { t: translate, ...bannerFace(state) } as unknown as TransferBannerProps
 
   const root = document.getElementById('root')
   if (root === null) throw new Error('preview: no #root')
 
   /**
-   * `?only=toast` mounts the notification alone.
+   * `?only=toast` mounts the notification alone; `?only=banner` the banner; and
+   * `?only=fish` the companion's five postures side by side.
    *
-   * Kept because the two surfaces fail independently and a blank page does not
-   * say which one did: with both mounted, a throw in either unmounts the tree
-   * and looks identical.
+   * The first two are kept because the surfaces fail independently and a blank
+   * page does not say which one did: with both mounted, a throw in either
+   * unmounts the tree and looks identical. The fish is here because it is the
+   * one drawing in this plugin that cannot be judged by an assertion — whether
+   * a small animal reads as that animal at 18 pixels is a question only an eye
+   * can answer, and this is the only place to put one.
    */
   const only = params.get('only')
 
@@ -379,13 +502,17 @@ try {
     onRecoverableError: (error: unknown) => { reportFailure('recoverable', error) },
   }).render(
     only === 'toast'
-      ? <ReceiveToast {...toastProps} />
-      : (
-        <>
-          <LocalSendPanel {...props} />
-          {params.get('toast') === '1' ? <ReceiveToast {...toastProps} /> : null}
-        </>
-      ),
+      ? <NoticeToast {...toastProps} />
+      : only === 'banner'
+        ? <TransferBanner {...bannerProps} />
+        : only === 'fish'
+          ? <FishBoard />
+          : (
+            <>
+              <LocalSendPanel {...props} />
+              {params.get('toast') === '1' ? <NoticeToast {...toastProps} /> : null}
+            </>
+          ),
   )
 } catch (error: unknown) {
   // Setup runs synchronously, so a failure here — a fixture that will not build,

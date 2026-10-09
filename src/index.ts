@@ -66,17 +66,20 @@ import {
   storePaths,
   type LocalSendConfig,
 } from './store.ts'
-import { TransferRegistry } from './transfer.ts'
+import { TransferRegistry, type OfferDecision } from './transfer.ts'
 import {
+  CANCEL_PATH,
   DECIDE_PATH,
   INSPECT_PATH,
   PREPARE_PATH,
   RENAME_PATH,
+  RETRY_PATH,
   REVEAL_PATH,
   SCAN_PATH,
   SEND_PATHS_PATH,
   STATE_PATH,
   STREAM_PATH,
+  type CancelTransferRequest,
   type DecideRequest,
   type LocalSendState,
   type PathCandidate,
@@ -84,6 +87,8 @@ import {
   type PrepareSendRequest,
   type PrepareSendResponse,
   type RenameRequest,
+  type RetryTransferRequest,
+  type RetryTransferResponse,
   type SendPathsRequest,
   type SendPathsResponse,
   type StateWarning,
@@ -201,6 +206,16 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
   let servingWarning: StateWarning | undefined
   /** Panel-driven sends awaiting their bytes. */
   const staged = new Map<string, StagedSend>()
+  /**
+   * Where an outgoing path send can be read from again, keyed by its row.
+   *
+   * Only these are retryable, and the reason is about where the bytes live: a
+   * path send reads them off this machine on demand, while a file dropped on the
+   * panel was a live request body that stopped existing the moment its transfer
+   * settled. The registry row the panel sees deliberately carries no disk paths,
+   * so the note lives here rather than on the row.
+   */
+  const sources = new Map<string, { readonly paths: readonly string[]; readonly peer: OutboundPeer }>()
   /** Port the transfer API actually bound, which may differ from the configured one. */
   let boundPort = resolved.port
   /** Whether the transfer API is serving; the panel says so when it is not. */
@@ -317,7 +332,9 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
         serving,
       },
       peers: peerRows(),
-      transfers: registry.list(),
+      // `canRetry` is joined in here rather than held on the registry row,
+      // because only this half knows which sends still have their bytes.
+      transfers: registry.list().map(row => sources.has(row.id) ? { ...row, canRetry: true } : row),
       inbox: receiveDirectory(resolved, paths),
       discovery: {
         active: discoveryWarning === undefined,
@@ -489,7 +506,21 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
         const peer = targetOf(body.peer)
         if (peer === undefined) return errorResponse('that device is no longer reachable', 409)
         const result = await sendPaths(peer, requested, deviceInfo(), host)
-        return jsonResponse({ transferId: result.transferId } satisfies SendPathsResponse)
+        // Remembered whatever the outcome: a send that failed partway is exactly
+        // the one the user will want to try again, and one that succeeded costs
+        // a few strings until the registry forgets its row.
+        for (const id of sources.keys()) {
+          if (registry.get(id) === undefined) sources.delete(id)
+        }
+        sources.set(result.transferId, { paths: requested, peer })
+        // The outcome rides along with the id: this answer arrives after the
+        // transfer is already over, and a caller that is no longer on screen —
+        // the right-click menu — has no way to look the row up.
+        return jsonResponse({
+          transferId: result.transferId,
+          sent: result.sent,
+          failed: result.failed,
+        } satisfies SendPathsResponse)
       },
     }),
     'dsh-local-send: send-paths route',
@@ -505,7 +536,22 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
         if (body === null || typeof body.transferId !== 'string' || typeof body.accept !== 'boolean') {
           return errorResponse('expected { transferId, accept }')
         }
-        const settled = registry.decide(body.transferId, body.accept)
+        const fileIds = body.fileIds
+        if (fileIds !== undefined && (!Array.isArray(fileIds) || fileIds.some(id => typeof id !== 'string'))) {
+          return errorResponse('fileIds must be a list of file ids')
+        }
+        // Validated as a list before it is trusted, because this is the one route
+        // where the panel's body decides what gets written to disk: an id that is
+        // not a string, or a list that is not a list, must not reach the session.
+        const decision: OfferDecision = !body.accept
+          ? { kind: 'decline' }
+          : fileIds === undefined
+            // No list means the surface that answered had none to show — a
+            // notification with one button — so the answer is every file the
+            // receiver's own limits left standing.
+            ? { kind: 'acceptAll' }
+            : { kind: 'acceptSome', fileIds }
+        const settled = registry.decide(body.transferId, decision)
         if (!settled) {
           // A decision that arrives after the offer timed out is not an error
           // worth a failure status: the panel's view was one poll behind, and
@@ -516,6 +562,72 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
       },
     }),
     'dsh-local-send: decide route',
+  )
+
+  ctx.effect(
+    () => connectionOf(ctx).fetch.register({
+      path: CANCEL_PATH,
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: async (request) => {
+        const body = await readJson<CancelTransferRequest>(request)
+        if (body === null || typeof body.transferId !== 'string') {
+          return errorResponse('expected { transferId }')
+        }
+        if (registry.get(body.transferId) === undefined) {
+          return errorResponse('no such transfer', 404)
+        }
+        // Three different things can be holding a live transfer and a cancel has
+        // to reach whichever one it is: a browser-driven send staged on this
+        // side, a path send running inside its own request, and an incoming
+        // transfer the server is receiving. Each is told, and none of them is
+        // asked whether it agrees.
+        const entry = staged.get(body.transferId)
+        if (entry !== undefined) {
+          staged.delete(body.transferId)
+          // The peer is holding a session open for bytes that will never arrive.
+          // Because the protocol allows one live session, leaving it would make
+          // that device refuse the next sender.
+          await cancelOffer(entry.offer, host.warn)
+        }
+        // Idempotent, and the only half that can stop bytes already arriving.
+        server.cancelSession(body.transferId)
+        // Settles the row and aborts whatever this device is still pushing.
+        registry.cancel(body.transferId)
+        return jsonResponse({ canceled: true })
+      },
+    }),
+    'dsh-local-send: cancel route',
+  )
+
+  ctx.effect(
+    () => connectionOf(ctx).fetch.register({
+      path: RETRY_PATH,
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: async (request) => {
+        const body = await readJson<RetryTransferRequest>(request)
+        if (body === null || typeof body.transferId !== 'string') {
+          return errorResponse('expected { transferId }')
+        }
+        const source = sources.get(body.transferId)
+        if (source === undefined) {
+          return errorResponse('those files are no longer available to send again', 409)
+        }
+        // Re-resolved rather than reused: the peer may have moved address since,
+        // and sending to where it used to be would fail as a timeout the panel
+        // could only report as "no answer".
+        const peer = targetOf(source.peer.fingerprint)
+        if (peer === undefined) return errorResponse('that device is no longer reachable', 409)
+        const result = await sendPaths(peer, source.paths, deviceInfo(), host)
+        // The retry is a new row rather than a revival of the old one, because
+        // the protocol has no resume: the offer goes out again and the receiving
+        // device decides again. Keeping both is what makes the history honest.
+        sources.set(result.transferId, { paths: source.paths, peer })
+        return jsonResponse({ transferId: result.transferId } satisfies RetryTransferResponse)
+      },
+    }),
+    'dsh-local-send: retry route',
   )
 
   ctx.effect(

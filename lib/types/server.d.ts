@@ -144,7 +144,7 @@ export declare class LocalSendServer {
      * resolve to refusal rather than to a request that never ends.
      *
      * @param id - registry row id.
-     * @returns whether the transfer was accepted.
+     * @returns what the user decided.
      */
     private awaitDecision;
     /**
@@ -214,6 +214,18 @@ export declare class LocalSendServer {
      * @param reason - message to show the user.
      */
     private failFile;
+    /**
+     * Stop serving one incoming transfer.
+     *
+     * The whole of "cancel a receive": the session leaves the table so no further
+     * upload is authorised, the sessions already being written are told to stop,
+     * their staging files are removed so a partial never sits in the receive
+     * directory, and the registry row is settled as canceled.
+     *
+     * @param id - the session, which is also the registry row id.
+     * @returns whether a session was actually being served.
+     */
+    cancelSession(id: string): boolean;
     /**
      * Close a session whose accepted bytes have all arrived.
      *

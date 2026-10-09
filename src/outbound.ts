@@ -477,8 +477,23 @@ export async function uploadStream(
     headers: { 'content-type': 'application/octet-stream' },
     body: Readable.toWeb(Readable.from(counted())) as unknown as BodyInit,
     duplex: 'half',
+    // The registry's signal for this row, so a cancel from the panel tears the
+    // request down mid-body instead of letting a file the user has already
+    // stopped keep arriving. Reading it here rather than taking one as an
+    // argument keeps every caller — the panel route and the path sender alike —
+    // cancellable without either of them knowing about it.
+    signal: registry.signalFor(offer.transferId),
   }
-  const response = await fetch(url, init)
+  let response: Response
+  try {
+    response = await fetch(url, init)
+  } catch (error: unknown) {
+    // An abort is the user's own doing. Thrown onward as itself, a stopped
+    // transfer would read as a transport fault against a row that already says
+    // it was stopped.
+    if (registry.stopped(offer.transferId)) throw new Error('the transfer was stopped')
+    throw error
+  }
   await response.arrayBuffer()
   if (!response.ok) {
     throw new Error(
@@ -537,6 +552,11 @@ export function markFileFailed(
   fileId: string,
   reason: string,
 ): void {
+  // A file that stopped because the user stopped the transfer has not failed:
+  // the row already reads as canceled and its files as declined, and writing a
+  // failure over that would present the user's own decision as the other
+  // device's refusal.
+  if (registry.stopped(transferId)) return
   registry.updateFile(transferId, fileId, (row) => {
     row.status = 'failed'
     row.error = reason
