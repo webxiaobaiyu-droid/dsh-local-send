@@ -17,7 +17,6 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis';
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client';
 import { type LocalSendLocaleKey } from './locales.ts';
-import { type HostError } from './api.ts';
 export type { LocalSendPanelInjected, LocalSendPanelProps } from './LocalSendPanel.tsx';
 export type { LocalSendLocaleKey } from './locales.ts';
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -44,4 +43,8 @@ export declare const inject: string[];
  * @param ctx - Client plugin context.
  */
 export declare function apply(ctx: ClientContext): void;
-export type { HostError };
+/**
+ * Re-exported as a value rather than a type: it is thrown, so a caller that
+ * wants to tell a host failure from any other has to be able to catch it.
+ */
+export { HostError } from './api.ts';

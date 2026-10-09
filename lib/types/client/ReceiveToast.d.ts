@@ -21,7 +21,6 @@
  */
 import { type ReactNode } from 'react';
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
-import type { LocalSendLocaleKey } from './locales.ts';
 import { type TransferStore } from './state.ts';
 /** Registration-side face the notification reads. */
 export interface ReceiveToastInjected {
@@ -38,4 +37,3 @@ export type ReceiveToastProps = PropsRuntime<'shell.overlay'> & PropsLocale<'loc
  * @param props - slot props, locale seat, and the injected face.
  */
 export declare function ReceiveToast(props: ReceiveToastProps): ReactNode;
-export type { LocalSendLocaleKey };

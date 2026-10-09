@@ -29,7 +29,6 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { consumeReference, readReference, subscribeReference } from './pending.ts'
 import { referenceAction } from './reference-action.ts'
-import type { LocalSendLocaleKey } from './locales.ts'
 
 /** Registration-side face the composer entry reads. */
 export interface ComposerEntryInjected {
@@ -85,4 +84,3 @@ export function ComposerEntry(props: ComposerEntryProps): ReactNode {
   return null
 }
 
-export type { LocalSendLocaleKey }

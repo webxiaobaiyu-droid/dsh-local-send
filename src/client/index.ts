@@ -40,7 +40,7 @@ import { requestReference } from './pending.ts'
 import { ReceiveToast, type ReceiveToastInjected } from './ReceiveToast.tsx'
 import { createTransferStore } from './state.ts'
 import { STYLE_ID, styles } from './styles.ts'
-import { fetchState, type HostError } from './api.ts'
+import { fetchState } from './api.ts'
 
 export type { LocalSendPanelInjected, LocalSendPanelProps } from './LocalSendPanel.tsx'
 export type { LocalSendLocaleKey } from './locales.ts'
@@ -257,4 +257,8 @@ function HandoffEntryIcon({ size }: { readonly size: number }): ReturnType<typeo
   return HandoffIcon({ size })
 }
 
-export type { HostError }
+/**
+ * Re-exported as a value rather than a type: it is thrown, so a caller that
+ * wants to tell a host failure from any other has to be able to catch it.
+ */
+export { HostError } from './api.ts'

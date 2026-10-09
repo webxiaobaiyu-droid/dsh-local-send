@@ -22,7 +22,6 @@
  */
 import { type ReactNode } from 'react';
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
-import type { LocalSendLocaleKey } from './locales.ts';
 /** Registration-side face the composer entry reads. */
 export interface ComposerEntryInjected {
     /**
@@ -46,4 +45,3 @@ export type ComposerEntryProps = PropsRuntime<'conversation.input.left'> & Props
  * @param props - slot props, locale seat, and the injected face.
  */
 export declare function ComposerEntry(props: ComposerEntryProps): ReactNode;
-export type { LocalSendLocaleKey };

@@ -25,7 +25,6 @@ import { Toast } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { formatBytes } from './format.ts'
 import { ReceiveIcon } from './icons.tsx'
-import type { LocalSendLocaleKey } from './locales.ts'
 import { noticeOffer } from './notice.ts'
 import { useTransferState, type TransferStore } from './state.ts'
 
@@ -133,4 +132,3 @@ export function ReceiveToast(props: ReceiveToastProps): ReactNode {
   )
 }
 
-export type { LocalSendLocaleKey }
