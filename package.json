@@ -55,7 +55,8 @@
     "watch": "tsdown --watch",
     "typecheck": "tsc -p tsconfig.host.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run",
-    "check": "npm run typecheck && npm test && npm run preview"
+    "check": "npm run typecheck && npm test && npm run preview",
+    "pretest": "npm run build"
   },
   "peerDependencies": {
     "react": "^18.2.0",

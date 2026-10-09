@@ -150,9 +150,10 @@ pnpm install
 DSH_SRC=/path/to/deepseek-harness pnpm run link:host   # 链接 harness 的包（每次 pnpm install 后要重跑）
 pnpm run build          # 两半 + 类型声明
 pnpm run typecheck      # 分别检查 host / client（两半的 Context 合并冲突，必须分开）
-pnpm test               # 136 项测试
+pnpm test               # 141 项测试（会先自动构建，因为其中一项测的就是构建产物）
 pnpm run preview        # 渲染界面截图到 preview/dist/（真实组件 + 产品主题样式表 + 无头 Chrome）
 pnpm run watch          # 增量构建
+pnpm run check          # 类型检查 + 测试 + 界面回归，一条命令跑完
 ```
 
 改动后需要重启 DSH 才会生效（host 半边的代码没有文件监听）。
@@ -185,6 +186,7 @@ node scripts/verify.mjs
 | `tests/client-bundle.client.spec.ts` | 浏览器 bundle 的包装契约、导出、四个槽位注册 |
 | `tests/manifest.host.spec.ts` | 包本身能否被安装：用**产品自己的 `parseDshClient`** 校验清单、bundle patch 的 YAML 形状、入口文件存在、模块图无环 |
 | `tests/probe.host.spec.ts` | 标定上面那个验证脚本：让它对着本仓库自己的发现循环跑，证明该触发时确实触发 |
+| `tests/built.host.spec.ts` | 导入**构建产物** `lib/index.js`（加载器真正加载的那个文件，其余测试都测 `src/`）并激活它；并断言它运行时只导入 Node 内置模块 |
 | `tests/reference.client.spec.ts` | 「加入会话」的决策与传递：mention 语法、引号规则、只消费一次、过期；以及接收提醒的规则（同一个 offer 关掉就保持关闭，新的 offer 仍要弹出） |
 | `tests/state.client.spec.ts` | 共享轮询：没人看时零请求、忙碌 500ms / 空闲 2.5s / 后台 8s、失败可恢复、慢请求不叠加、卸载后到达的响应被丢弃 |
 
@@ -207,6 +209,7 @@ node scripts/verify.mjs
 - **拖拽用计数器而非布尔值**（`dragleave` 会在进入子元素时触发）→ `src/client/LocalSendPanel.tsx` 顶部
 - **"加入会话"为什么走 `@路径` 引用而不是附件上传** → `src/client/ComposerEntry.tsx` 顶部
 - **发送端为什么必须发 `cancel`** → `src/outbound.ts` 的 `cancelOffer`
+- **与 harness 的运行时耦合为零** → 构建产物只 `import "node:..."`；所有 `@deepseek-ai/*` 都是类型导入，编译期即被擦除。这是本包不会因 harness 版本变动而坏的原因，由 `tests/built.host.spec.ts` 守着
 - **为什么 `setMulticastInterface` 之前必须等 bind** → `src/discovery.ts` 的 `listening`
 
 ---
