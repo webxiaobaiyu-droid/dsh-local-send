@@ -37,16 +37,41 @@ const SHEETS = [
 /** Chrome's binary, used headlessly for the screenshot. */
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
-/** The scenes and palettes to capture. */
+/**
+ * The scenes and palettes to capture, each with what must be on screen.
+ *
+ * The expectations are the point. A scene that renders nothing produces a
+ * screenshot indistinguishable from a scene that legitimately has nothing in it,
+ * and this harness exists precisely because the browser half cannot be checked
+ * any other way before the plugin is loaded into a running Harness. So each
+ * capture is preceded by a look at the document, and a scene that failed to
+ * render fails the run.
+ *
+ * Matched against element attributes rather than bare names: the inlined
+ * stylesheet contains every class this plugin defines, so a search for
+ * `dls-panel` alone would find the CSS and call a blank page a success.
+ */
 const SHOTS = [
-  { scene: 'busy', theme: 'light', name: 'panel-light' },
-  { scene: 'busy', theme: 'dark', name: 'panel-dark' },
-  { scene: 'empty', theme: 'light', name: 'empty-light' },
-  { scene: 'incoming', theme: 'dark', name: 'incoming-dark' },
-  { scene: 'incoming', theme: 'light', name: 'notify-light', toast: true },
-  { scene: 'incoming', theme: 'dark', name: 'notify-dark', toast: true },
-  { scene: 'received', theme: 'light', name: 'received-light' },
-  { scene: 'blocked', theme: 'dark', name: 'blocked-dark' },
+  { scene: 'busy', theme: 'light', name: 'panel-light', expect: ['class="[^"]*dls-panel'] },
+  { scene: 'busy', theme: 'dark', name: 'panel-dark', expect: ['class="[^"]*dls-panel'] },
+  { scene: 'empty', theme: 'light', name: 'empty-light', expect: ['class="[^"]*dls-panel', 'dls-emptyTitle'] },
+  { scene: 'incoming', theme: 'dark', name: 'incoming-dark', expect: ['class="[^"]*dls-panel', 'dls-incoming'] },
+  {
+    scene: 'incoming',
+    theme: 'light',
+    name: 'notify-light',
+    toast: true,
+    expect: ['class="[^"]*dls-panel', 'role="alert"', '共 11.0 MB'],
+  },
+  {
+    scene: 'incoming',
+    theme: 'dark',
+    name: 'notify-dark',
+    toast: true,
+    expect: ['class="[^"]*dls-panel', 'role="alert"', '共 11.0 MB'],
+  },
+  { scene: 'received', theme: 'light', name: 'received-light', expect: ['class="[^"]*dls-panel', 'dls-row'] },
+  { scene: 'blocked', theme: 'dark', name: 'blocked-dark', expect: ['class="[^"]*dls-panel', 'dls-note'] },
 ]
 
 /** Read the Harness theme sheets, or explain which one is missing. */
@@ -141,6 +166,59 @@ async function servePreview() {
 }
 
 /**
+ * Run Chrome headlessly and hand back the document it ended up with.
+ *
+ * @param origin - the origin the preview is being served from.
+ * @param shot - the scene to load.
+ * @returns the serialized document.
+ */
+async function documentOf(origin, shot) {
+  const toast = shot.toast === true ? '&toast=1' : ''
+  const url = `${origin}/index.html?scene=${shot.scene}&theme=${shot.theme}${toast}`
+  const child = spawn(CHROME, [
+    '--headless',
+    '--disable-gpu',
+    '--virtual-time-budget=4000',
+    '--dump-dom',
+    url,
+  ], { stdio: ['ignore', 'pipe', 'ignore'], detached: true })
+  let html = ''
+  child.stdout.on('data', (chunk) => { html += String(chunk) })
+  const deadline = Date.now() + 40_000
+  while (child.exitCode === null && Date.now() < deadline) {
+    await new Promise((wait) => setTimeout(wait, 100))
+  }
+  try {
+    process.kill(-child.pid, 'SIGKILL')
+  } catch {
+    // Already exited, which is the good case.
+  }
+  return html
+}
+
+/**
+ * Decide whether a scene actually rendered.
+ *
+ * @param shot - the scene and what it must contain.
+ * @param html - the document Chrome produced.
+ * @returns a list of problems; empty means the scene is good.
+ */
+function problemsWith(shot, html) {
+  const problems = []
+  if (html.length === 0) return ['Chrome produced no document']
+  // A component that throws unmounts the whole tree and leaves a blank page
+  // behind; the entry records the reason in the document so it is not lost.
+  const failure = /<pre id="preview-error"[^>]*>([\s\S]*?)<\/pre>/u.exec(html)
+  if (failure !== null) {
+    problems.push(`render failed: ${(failure[1] ?? '').split('\n').slice(0, 3).join(' ')}`)
+  }
+  for (const pattern of shot.expect ?? []) {
+    if (!new RegExp(pattern, 'u').test(html)) problems.push(`missing /${pattern}/`)
+  }
+  return problems
+}
+
+/**
  * Screenshot one scene with headless Chrome.
  *
  * Chrome is spawned and then polled for rather than waited on: it writes the
@@ -200,9 +278,22 @@ if (!existsSync(CHROME)) {
   console.log(`preview: built ${join(OUT, 'index.html')} (no Chrome at ${CHROME}, so no screenshots)`)
 } else {
   const { origin, stop } = await servePreview()
+  const failures = []
   try {
-    for (const shot of SHOTS) console.log(`preview: ${shot.name} -> ${await shoot(origin, shot)}`)
+    for (const shot of SHOTS) {
+      const problems = problemsWith(shot, await documentOf(origin, shot))
+      if (problems.length > 0) {
+        failures.push({ name: shot.name, problems })
+        console.log(`FAIL  ${shot.name.padEnd(16)} ${problems.join('; ')}`)
+        continue
+      }
+      console.log(` ok   ${shot.name.padEnd(16)} -> ${await shoot(origin, shot)}`)
+    }
   } finally {
     stop()
+  }
+  if (failures.length > 0) {
+    console.error(`\npreview: ${String(failures.length)} of ${String(SHOTS.length)} scenes did not render`)
+    process.exitCode = 1
   }
 }

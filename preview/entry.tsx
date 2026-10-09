@@ -329,39 +329,18 @@ function face(state: LocalSendState): LocalSendPanelInjected {
 const params = new URLSearchParams(window.location.search)
 const scene = params.get('scene') ?? 'busy'
 const theme = params.get('theme') ?? 'light'
-const state = SCENES[scene] ?? SCENES['busy'] as LocalSendState
-
-document.body.toggleAttribute('data-ds-dark-theme', theme === 'dark')
-
-// The same injection the plugin performs on activation, from the same export.
-const tag = document.createElement('style')
-tag.textContent = styles
-document.head.appendChild(tag)
-
-const props = {
-  t: translate,
-  ...face(state),
-} as unknown as LocalSendPanelProps
-
-const root = document.getElementById('root')
-if (root === null) throw new Error('preview: no #root')
 
 /**
- * Mount the panel, and the receive notification when the scene has one waiting.
+ * Report a failure into the document.
  *
- * The notification is the product's own `Toast` component driven by this
- * plugin's copy and rules — the whole surface, both halves of it, rendered for
- * real. Seeing it matters because it is the only thing this plugin says to
- * somebody who is not looking at it.
- */
-const toastProps = { t: translate, ...toastFace(state) } as unknown as ReceiveToastProps
-
-/**
- * Report a render failure into the document.
+ * A render failure unmounts the whole tree and leaves a blank page, and on a
+ * screenshot that is indistinguishable from a scene that legitimately has
+ * nothing in it. Everything that can go wrong here is therefore written where
+ * the document can be read — by a person looking at the capture, and by the
+ * render script, which refuses to call a blank scene a success.
  *
- * React renders asynchronously, so a throwing component does not surface at the
- * `render` call — it unmounts the whole tree and leaves a blank page, which on a
- * screenshot is indistinguishable from a scene that simply has nothing in it.
+ * @param label - which stage failed.
+ * @param error - what was thrown.
  */
 function reportFailure(label: string, error: unknown): void {
   const box = document.createElement('pre')
@@ -371,25 +350,45 @@ function reportFailure(label: string, error: unknown): void {
   document.body.appendChild(box)
 }
 
-/**
- * `?only=toast` mounts the notification alone.
- *
- * Kept because the two surfaces fail independently and a blank screenshot does
- * not say which one did: with both mounted, a throw in either unmounts the tree
- * and looks identical.
- */
-const only = params.get('only')
+try {
+  const state = SCENES[scene] ?? SCENES['busy'] as LocalSendState
+  document.body.toggleAttribute('data-ds-dark-theme', theme === 'dark')
 
-createRoot(root, {
-  onUncaughtError: (error: unknown) => { reportFailure('uncaught', error) },
-  onRecoverableError: (error: unknown) => { reportFailure('recoverable', error) },
-}).render(
-  only === 'toast'
-    ? <ReceiveToast {...toastProps} />
-    : (
-      <>
-        <LocalSendPanel {...props} />
-        {params.get('toast') === '1' ? <ReceiveToast {...toastProps} /> : null}
-      </>
-    ),
-)
+  // The same injection the plugin performs on activation, from the same export.
+  const tag = document.createElement('style')
+  tag.textContent = styles
+  document.head.appendChild(tag)
+
+  const props = { t: translate, ...face(state) } as unknown as LocalSendPanelProps
+  const toastProps = { t: translate, ...toastFace(state) } as unknown as ReceiveToastProps
+
+  const root = document.getElementById('root')
+  if (root === null) throw new Error('preview: no #root')
+
+  /**
+   * `?only=toast` mounts the notification alone.
+   *
+   * Kept because the two surfaces fail independently and a blank page does not
+   * say which one did: with both mounted, a throw in either unmounts the tree
+   * and looks identical.
+   */
+  const only = params.get('only')
+
+  createRoot(root, {
+    onUncaughtError: (error: unknown) => { reportFailure('uncaught', error) },
+    onRecoverableError: (error: unknown) => { reportFailure('recoverable', error) },
+  }).render(
+    only === 'toast'
+      ? <ReceiveToast {...toastProps} />
+      : (
+        <>
+          <LocalSendPanel {...props} />
+          {params.get('toast') === '1' ? <ReceiveToast {...toastProps} /> : null}
+        </>
+      ),
+  )
+} catch (error: unknown) {
+  // Setup runs synchronously, so a failure here — a fixture that will not build,
+  // a missing mount point — is caught rather than lost.
+  reportFailure('setup', error)
+}

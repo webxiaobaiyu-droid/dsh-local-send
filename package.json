@@ -54,7 +54,8 @@
     "link:host": "node scripts/link-host-packages.mjs",
     "watch": "tsdown --watch",
     "typecheck": "tsc -p tsconfig.host.json --noEmit && tsc -p tsconfig.client.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test && npm run preview"
   },
   "peerDependencies": {
     "react": "^18.2.0",
