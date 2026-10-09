@@ -27,8 +27,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 // (sessionId, inputActions) this entry is handed.
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { formatMention } from './mention.ts'
 import { consumeReference, readReference, subscribeReference } from './pending.ts'
+import { referenceAction } from './reference-action.ts'
 import type { LocalSendLocaleKey } from './locales.ts'
 
 /** Registration-side face the composer entry reads. */
@@ -67,24 +67,19 @@ export function ComposerEntry(props: ComposerEntryProps): ReactNode {
   useEffect(() => subscribeReference(() => { setRevision(value => value + 1) }), [])
 
   useEffect(() => {
-    if (pending === undefined) return
-    if (sessionId === undefined || !hasSession()) return
-    const mention = formatMention(pending)
-    if (mention === undefined) {
-      // A path the grammar cannot represent — one carrying a quote or a control
-      // character. Dropped rather than inserted as a token that would parse as
-      // two, and the panel still shows the file and its location.
-      consumeReference()
-      return
-    }
-    // Consumed before the insert, so a failing edit cannot leave a request that
-    // re-fires on the next render and appends the mention repeatedly.
+    // The rules live in `reference-action.ts`; this only carries them out. See
+    // that module for why each case resolves the way it does.
+    const action = referenceAction(pending, sessionId !== undefined && hasSession())
+    if (action.kind === 'wait') return
+    // Taken before the insert, so a failing edit cannot leave a request that
+    // re-fires on the next render and appends the reference repeatedly.
     consumeReference()
-    // One trailing space: the grammar needs whitespace after a token for the
-    // next `@` to start a new one, and a user typing straight on would otherwise
-    // extend this path.
+    if (action.kind === 'drop') return
+    // The caret is captured here rather than in the decision: it is editor
+    // state, and a span captured anywhere but at the moment of writing would be
+    // guarded against by the revision check and silently refused.
     const span = inputActions.captureInsertion()
-    inputActions.insertText(`${mention} `, span)
+    inputActions.insertText(action.text, span)
   }, [pending, sessionId, inputActions, hasSession])
 
   return null

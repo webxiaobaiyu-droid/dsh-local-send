@@ -26,6 +26,7 @@ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-cli
 import { formatBytes } from './format.ts'
 import { ReceiveIcon } from './icons.tsx'
 import type { LocalSendLocaleKey } from './locales.ts'
+import { noticeOffer } from './notice.ts'
 import { useTransferState, type TransferStore } from './state.ts'
 
 /**
@@ -60,33 +61,38 @@ export function ReceiveToast(props: ReceiveToastProps): ReactNode {
   const { t, store, answer } = props
   const read = useTransferState(store)
   const [busy, setBusy] = useState(false)
-  /** The offer this notification is currently for, so a new one restarts it. */
-  const [shown, setShown] = useState<string | undefined>(undefined)
+  /**
+   * The offer the reader has already dismissed.
+   *
+   * Held here and passed down rather than latched inside a render guard, so that
+   * dismissing one offer cannot suppress the next one. See `notice.ts`.
+   */
+  const [dismissed, setDismissed] = useState<string | undefined>(undefined)
 
   useEffect(() => store.retain(), [store])
 
-  const waiting = read.status === 'ready'
-    ? read.state.transfers.find(transfer => transfer.direction === 'incoming' && transfer.status === 'awaiting')
-    : undefined
+  const waiting = noticeOffer(read, dismissed)
 
-  // One notification, keyed to one offer: when the offer is answered or times
-  // out the notification goes with it, and a later offer gets a fresh hold
-  // rather than inheriting the remainder of this one's.
-  useEffect(() => {
-    setShown(waiting?.id)
-    setBusy(false)
-  }, [waiting?.id])
+  // An offer that has been answered or withdrawn disappears on its own, so the
+  // busy mark belongs to the offer on screen rather than to this component's
+  // lifetime.
+  useEffect(() => { setBusy(false) }, [waiting?.id])
 
   const decide = useCallback((accept: boolean): void => {
     if (waiting === undefined) return
+    // The toast primitive has no disabled action, so a second click on a slow
+    // answer would post a second decision. The host would drop it — the offer is
+    // already settled — but refusing it here is what keeps the surface honest
+    // about having been pressed once.
+    if (busy) return
     setBusy(true)
     void answer(waiting.id, accept).then(
       () => { void store.refresh() },
       () => { setBusy(false) },
     )
-  }, [waiting, answer, store])
+  }, [waiting, busy, answer, store])
 
-  if (waiting === undefined || shown !== waiting.id) return null
+  if (waiting === undefined) return null
 
   const count = waiting.files.length
   const summary = count === 1
@@ -97,22 +103,19 @@ export function ReceiveToast(props: ReceiveToastProps): ReactNode {
 
   return (
     <Toast
-      // The key restarts the hold for a different offer; see the note above.
+      // The key is what restarts the hold: a different offer is a new
+      // notification rather than the remainder of this one's.
       key={waiting.id}
       text={`${summary} — ${detail}`}
       icon={<ReceiveIcon size={18} />}
       holdMs={HOLD_MS}
       actions={[
-        {
-          label: busy ? t('accept') : t('accept'),
-          onClick: () => { decide(true) },
-        },
-        {
-          label: t('decline'),
-          onClick: () => { decide(false) },
-        },
+        { label: t('accept'), onClick: () => { decide(true) } },
+        { label: t('decline'), onClick: () => { decide(false) } },
       ]}
-      onDone={() => { setShown(undefined) }}
+      // Fading is not answering: the offer is still waiting, and the panel still
+      // shows it with its own buttons. Dismissing only silences this surface.
+      onDone={() => { setDismissed(waiting.id) }}
     />
   )
 }

@@ -150,7 +150,7 @@ pnpm install
 DSH_SRC=/path/to/deepseek-harness pnpm run link:host   # 链接 harness 的包（每次 pnpm install 后要重跑）
 pnpm run build          # 两半 + 类型声明
 pnpm run typecheck      # 分别检查 host / client（两半的 Context 合并冲突，必须分开）
-pnpm test               # 105 项测试
+pnpm test               # 136 项测试
 pnpm run preview        # 渲染界面截图（用真实组件与样式表）
 pnpm run watch          # 增量构建
 ```
@@ -185,6 +185,8 @@ node scripts/verify.mjs
 | `tests/client-bundle.client.spec.ts` | 浏览器 bundle 的包装契约、导出、四个槽位注册 |
 | `tests/manifest.host.spec.ts` | 包本身能否被安装：用**产品自己的 `parseDshClient`** 校验清单、bundle patch 的 YAML 形状、入口文件存在、模块图无环 |
 | `tests/probe.host.spec.ts` | 标定上面那个验证脚本：让它对着本仓库自己的发现循环跑，证明该触发时确实触发 |
+| `tests/reference.client.spec.ts` | 「加入会话」的决策与传递：mention 语法、引号规则、只消费一次、过期；以及接收提醒的规则（同一个 offer 关掉就保持关闭，新的 offer 仍要弹出） |
+| `tests/state.client.spec.ts` | 共享轮询：没人看时零请求、忙碌 500ms / 空闲 2.5s / 后台 8s、失败可恢复、慢请求不叠加、卸载后到达的响应被丢弃 |
 
 ### 设计取舍记录
 
