@@ -50,6 +50,7 @@
   "scripts": {
     "build": "tsdown && npm run build:types",
     "build:types": "tsc -p tsconfig.host.build.json && tsc -p tsconfig.client.build.json",
+    "preview": "node preview/render.mjs",
     "link:host": "node scripts/link-host-packages.mjs",
     "watch": "tsdown --watch",
     "typecheck": "tsc -p tsconfig.host.json --noEmit && tsc -p tsconfig.client.json --noEmit",

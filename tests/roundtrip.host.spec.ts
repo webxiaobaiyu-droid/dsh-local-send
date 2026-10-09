@@ -221,7 +221,7 @@ describe('sendPaths against a live receiver', () => {
     const { createReadStream } = await import('node:fs')
     const registry = new TransferRegistry()
 
-    const offered = [source.path('first.txt'), source.path('second.txt')].map((path, index) => ({
+    const offered = ['first.txt', 'second.txt'].map((_, index) => ({
       id: `f${String(index + 1)}`,
       fileName: `file${String(index + 1)}.txt`,
       size: 3,

@@ -50,7 +50,9 @@ export default defineConfig([
     // `build`, so both halves have one declaration pipeline.
     dts: false,
     clean: false,
-    external: [/^@deepseek-ai\//, /^node:/],
+    // Peer and runtime dependencies stay imports: the host's own instances of
+    // the harness packages are the ones that carry service identity.
+    deps: { neverBundle: [/^@deepseek-ai\//, /^node:/] },
   },
   {
     // Browser half: one file, self-registering, resolved through the table.
@@ -68,7 +70,9 @@ export default defineConfig([
     dts: false,
     clean: false,
     sourcemap: true,
-    external: LOADER_MODULES,
+    // Everything the page already provides stays a `require` resolved from the
+    // loader's module table.
+    deps: { neverBundle: LOADER_MODULES },
     define: {
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
     },

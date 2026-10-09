@@ -79,6 +79,9 @@ export const zh = {
   directionOut: '发往',
   filesCount: '{count} 个文件',
   filesCountOne: '1 个文件',
+  // Shown only when a batch did not land whole, because that is the one case the
+  // file count alone cannot describe.
+  outcomeMixed: '{arrived} 个成功，{lost} 个未完成',
 
   'status.awaiting': '等待确认',
   'status.transferring': '传输中',
@@ -102,7 +105,11 @@ export const zh = {
   reveal: '在文件夹中显示',
   savedTo: '已保存到 {path}',
 
-  // Failure surfaces
+  // Failure surfaces. The `detail` these carry is the operating system's own
+  // message, deliberately left untranslated: it is what a search for the
+  // problem will match.
+  'warning.portUnavailable': '无法监听 {port} 端口，暂时收不到文件：{detail}',
+  'warning.discoveryUnavailable': '设备发现已停用，看不到同一网络内的其他设备：{detail}',
   errorGeneric: '操作失败：{message}',
   errorOffline: '无法连接到插件后台，请确认插件已加载。',
   retry: '重试',
@@ -168,6 +175,7 @@ export const en: Record<LocalSendLocaleKey, string> = {
   directionOut: 'To',
   filesCount: '{count} files',
   filesCountOne: '1 file',
+  outcomeMixed: '{arrived} arrived, {lost} did not',
 
   'status.awaiting': 'Waiting for you',
   'status.transferring': 'Transferring',
@@ -190,6 +198,8 @@ export const en: Record<LocalSendLocaleKey, string> = {
   reveal: 'Show in folder',
   savedTo: 'Saved to {path}',
 
+  'warning.portUnavailable': 'Cannot listen on port {port}, so files cannot arrive right now: {detail}',
+  'warning.discoveryUnavailable': 'Device discovery is off, so other devices on this network cannot be seen: {detail}',
   errorGeneric: 'That did not work: {message}',
   errorOffline: 'Cannot reach the plugin host. Check that the plugin is loaded.',
   retry: 'Retry',

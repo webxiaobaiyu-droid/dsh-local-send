@@ -86,6 +86,7 @@ import {
   type RenameRequest,
   type SendPathsRequest,
   type SendPathsResponse,
+  type StateWarning,
 } from './types.ts'
 
 export type * from './types.ts'
@@ -189,7 +190,7 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
   /** Peers believed present, keyed by the fingerprint the protocol keys them by. */
   const peers = new Map<string, PeerRow>()
   /** The most recent discovery condition worth showing the user. */
-  let discoveryWarning: string | undefined
+  let discoveryWarning: StateWarning | undefined
   /**
    * The most recent transfer-API condition worth showing the user.
    *
@@ -197,7 +198,7 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
    * different consequences — a lost multicast socket still receives, a lost
    * listener does not — and a single field would report one as the other.
    */
-  let servingWarning: string | undefined
+  let servingWarning: StateWarning | undefined
   /** Panel-driven sends awaiting their bytes. */
   const staged = new Map<string, StagedSend>()
   /** Port the transfer API actually bound, which may differ from the configured one. */
@@ -618,7 +619,10 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
     onPeer: (peer: DiscoveredPeer) => { observe(peer.info, peer.host, peer.reachable) },
     onSweep: sweep,
     onWarning: (message: string) => {
-      discoveryWarning = message
+      // The socket layer reports a sentence; the panel needs the two halves of
+      // it separately, so the code is supplied here and the text rides along as
+      // the detail.
+      discoveryWarning = { code: 'discoveryUnavailable', detail: message }
       ctx.logger.warn(`dsh-local-send: ${message}`)
     },
   }, resolved.port)
@@ -638,8 +642,8 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
       },
       (error: unknown) => {
         serving = false
-        servingWarning = `transfer port ${String(resolved.port)} is unavailable: ${describe(error)}`
-        ctx.logger.warn(`dsh-local-send: ${servingWarning}`)
+        servingWarning = { code: 'portUnavailable', port: resolved.port, detail: describe(error) }
+        ctx.logger.warn(`dsh-local-send: transfer port ${String(resolved.port)} is unavailable: ${describe(error)}`)
       },
     )
     return () => {

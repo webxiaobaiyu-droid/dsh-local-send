@@ -34,6 +34,7 @@ import {
   type LocalSendState,
   type PathCandidate,
   type PeerRow,
+  type StateWarning,
   type TransferFileRow,
   type TransferRow,
 } from '../types.ts'
@@ -255,7 +256,7 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
         ) : null}
 
         {read.status === 'ready' && read.state.warning !== undefined
-          ? <p className="dls-note" data-tone="warn">{read.state.warning}</p>
+          ? <p className="dls-note" data-tone="warn">{warningText(t, read.state.warning)}</p>
           : null}
 
         {notice !== undefined ? <p className="dls-note">{notice}</p> : null}
@@ -309,7 +310,12 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
         {read.status === 'ready'
           ? (
             <Transfers
-              transfers={read.state.transfers}
+              transfers={read.state.transfers.filter(
+                // An offer still waiting is drawn by its own card above, with
+                // Accept and Decline on it. Listing it again as a transfer would
+                // show the same pending thing twice, under two sets of verbs.
+                transfer => !(transfer.direction === 'incoming' && transfer.status === 'awaiting'),
+              )}
               busyAction={busyAction}
               t={t}
               now={Date.now()}
@@ -671,7 +677,19 @@ function Transfers(
   )
 }
 
-/** One transfer, with its progress as its own left edge. */
+/**
+ * One transfer, with its outcome as its own left edge.
+ *
+ * The rail means two different things at two different times, and conflating
+ * them is what makes a progress bar lie: **while a transfer moves it is the byte
+ * fraction**, and **once it has settled it is the outcome**, full height and
+ * coloured by how it ended. A finished batch drawn at its byte fraction shows a
+ * stub of a few percent — a picture of "barely started" for something that is
+ * over.
+ *
+ * The meta line carries what the row is actually about, in the order a reader
+ * asks: which file (or how many), how it went, how much, and when.
+ */
 function TransferLine(
   { transfer, busyAction, t, now, onAddToConversation, onReveal }: {
     readonly transfer: TransferRow
@@ -682,28 +700,59 @@ function TransferLine(
     readonly onReveal: (path: string) => void
   },
 ): ReactNode {
-  const percent = percentOf(transfer.bytesDone, transfer.bytesTotal)
   const incoming = transfer.direction === 'incoming'
   const [open, setOpen] = useState(false)
-  const done = transfer.status === 'done' || transfer.status === 'partial'
+  const settled = transfer.status !== 'transferring' && transfer.status !== 'awaiting'
+  const percent = percentOf(transfer.bytesDone, transfer.bytesTotal)
   const single = transfer.files.length === 1 ? transfer.files[0] : undefined
+  const done = transfer.status === 'done' || transfer.status === 'partial'
+  /** Received files that are on disk, which are the ones worth referencing. */
+  const saved = transfer.files.filter(file => file.status === 'done' && file.savedPath !== undefined)
 
   const meta = useMemo(() => {
-    const size = transfer.bytesTotal > 0 ? formatBytes(transfer.bytesTotal) : ''
-    if (transfer.status === 'transferring') {
-      return `${formatBytes(transfer.bytesDone)} / ${size} · ${String(percent)}%`
+    const parts: string[] = []
+    // What is moving, or what was moved.
+    parts.push(single === undefined
+      ? fileCountLabel(t, transfer.files.length)
+      : shortenFileName(single.fileName, 44))
+
+    // How it went, but only when the count alone cannot say it: a batch where
+    // some files were refused is the case a reader has no way to guess. A
+    // single-file row already says it in its status, so repeating it there would
+    // be the same fact twice on one line.
+    const failed = transfer.files.filter(file => file.status === 'failed').length
+    const declined = transfer.files.filter(file => file.status === 'declined').length
+    if (settled && single === undefined && (failed > 0 || declined > 0)) {
+      parts.push(t('outcomeMixed', {
+        arrived: transfer.files.filter(file => file.status === 'done').length,
+        lost: failed + declined,
+      }))
     }
-    if (transfer.status === 'done') return size
-    const age = formatAge(transfer.updatedAt, now)
-    return [size, age].filter(part => part !== undefined && part.length > 0).join(' · ')
-  }, [transfer, percent, now])
+
+    // The figure: bytes against the total while moving, the total once it is over.
+    if (transfer.bytesTotal > 0) {
+      parts.push(transfer.status === 'transferring'
+        ? `${formatBytes(transfer.bytesDone)} / ${formatBytes(transfer.bytesTotal)} · ${String(percent)}%`
+        : formatBytes(transfer.bytesTotal))
+    }
+
+    if (settled) {
+      const age = formatAge(transfer.updatedAt, now)
+      if (age !== undefined) parts.push(age)
+    }
+    return parts.join(' · ')
+  }, [transfer, single, settled, percent, now, t])
+
+  // The rail: a fraction while moving, the outcome once there is nothing left to
+  // measure. See the note above on why these are not the same quantity.
+  const fill = settled ? 1 : percent / 100
 
   return (
     <div
       className="dls-row"
       data-status={transfer.status}
       data-direction={transfer.direction}
-      style={{ '--dls-fill': percent / 100 } as React.CSSProperties}
+      style={{ '--dls-fill': fill } as React.CSSProperties}
       role="group"
       aria-label={`${incoming ? t('directionIn') : t('directionOut')} ${transfer.peerAlias}`}
     >
@@ -718,36 +767,36 @@ function TransferLine(
           </span>
           <span className="dls-rowStatus">{statusLabel(t, transfer)}</span>
         </div>
-        <div className="dls-rowMeta">
-          {transfer.files.length > 1 ? `${fileCountLabel(t, transfer.files.length)} · ` : ''}
-          {meta}
-          {transfer.error === undefined ? '' : ` · ${transfer.error}`}
-        </div>
-        {open
-          ? (
-            <FileBreakdown
-              files={transfer.files}
-              t={t}
-              onAddToConversation={incoming ? onAddToConversation : undefined}
-            />
-          )
-          : null}
+        <div className="dls-rowMeta">{meta}</div>
+        {open ? (
+          <FileBreakdown
+            files={transfer.files}
+            t={t}
+            onAddToConversation={incoming ? onAddToConversation : undefined}
+          />
+        ) : null}
       </div>
 
       <div className="dls-rowActions">
-        {transfer.files.length > 1 || transfer.error !== undefined
+        {transfer.files.length > 1
           ? (
-            <button type="button" className="dls-action" data-tone="quiet" onClick={() => { setOpen(value => !value) }}>
-              {transfer.files.length > 1 ? fileCountLabel(t, transfer.files.length) : t('fileStatus.failed')}
+            <button
+              type="button"
+              className="dls-action"
+              data-tone="quiet"
+              aria-expanded={open}
+              onClick={() => { setOpen(value => !value) }}
+            >
+              {fileCountLabel(t, transfer.files.length)}
             </button>
           )
           : null}
 
-        {/* The panel's whole reason for existing: a received file that the
-            conversation can then read. Offered on the single-file row directly
-            and on the batch row through the file list, so a batch of twenty does
-            not put twenty buttons on one line. */}
-        {done && incoming && single?.savedPath !== undefined
+        {/* The panel's whole reason for existing: a received file the
+            conversation can then read. Offered directly on a single-file row,
+            and through the file list on a batch, so twenty files do not put
+            twenty buttons on one line. */}
+        {done && incoming && saved.length > 0
           ? (
             <button
               type="button"
@@ -755,16 +804,11 @@ function TransferLine(
               data-tone="primary"
               disabled={busyAction !== undefined}
               title={t('addToConversationHint')}
-              onClick={() => { onAddToConversation(single.savedPath as string) }}
+              onClick={() => {
+                if (single?.savedPath !== undefined) onAddToConversation(single.savedPath)
+                else setOpen(true)
+              }}
             >
-              {t('addToConversation')}
-            </button>
-          )
-          : null}
-
-        {done && incoming && transfer.files.length > 1
-          ? (
-            <button type="button" className="dls-action" onClick={() => { setOpen(true) }}>
               {t('addToConversation')}
             </button>
           )
@@ -777,10 +821,11 @@ function TransferLine(
               className="dls-action"
               data-tone="quiet"
               title={t('reveal')}
+              aria-label={t('reveal')}
               disabled={busyAction !== undefined}
               onClick={() => { onReveal(single.savedPath as string) }}
             >
-              {incoming && !done ? null : <FolderIcon size={13} />}
+              <FolderIcon size={13} />
             </button>
           )
           : null}
@@ -831,6 +876,25 @@ function FileBreakdown(
       ))}
     </ul>
   )
+}
+
+/**
+ * Say one host condition in the reader's language.
+ *
+ * The two halves are treated differently on purpose: the clause is ours and is
+ * translated, while the detail is the operating system's own message and is
+ * passed through untouched — it is the string a search for the problem will
+ * match, and translating it would help nobody.
+ *
+ * @param t - the locale seat.
+ * @param warning - the structured condition.
+ * @returns the sentence to show.
+ */
+function warningText(t: Translate, warning: StateWarning): string {
+  if (warning.code === 'portUnavailable') {
+    return t('warning.portUnavailable', { port: warning.port, detail: warning.detail })
+  }
+  return t('warning.discoveryUnavailable', { detail: warning.detail })
 }
 
 /** The localized status of a transfer. */

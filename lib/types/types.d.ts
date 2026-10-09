@@ -132,12 +132,34 @@ export interface DeviceRow {
     /** Whether the transfer API is actually bound. */
     readonly serving: boolean;
 }
+/**
+ * A condition worth telling the user about.
+ *
+ * Structured rather than a sentence, for the same reason no figure is
+ * pre-formatted: the host knows *what* went wrong and the panel knows how to say
+ * it in the reader's language. A host that shipped prose would also be shipping
+ * a locale it has no way to know, and an underlying error's own text — which is
+ * genuinely useful and has to survive — rides along as data.
+ */
+export type StateWarning = {
+    /** The transfer API could not bind its port. */
+    readonly code: 'portUnavailable';
+    /** The port that was attempted. */
+    readonly port: number;
+    /** The operating system's own words, passed through verbatim. */
+    readonly detail: string;
+} | {
+    /** The multicast socket is not usable, so peers will not be discovered. */
+    readonly code: 'discoveryUnavailable';
+    /** The operating system's own words, passed through verbatim. */
+    readonly detail: string;
+};
 /** What the discovery loop is doing, so the panel can explain an empty list. */
 export interface DiscoveryRow {
     /** Whether the multicast socket is bound and announcing. */
     readonly active: boolean;
     /** The most recent condition worth telling the user about, if any. */
-    readonly warning?: string;
+    readonly warning?: StateWarning;
 }
 /** The whole state the panel renders from. */
 export interface LocalSendState {
@@ -159,7 +181,7 @@ export interface LocalSendState {
      * and still shows them, and a panel that only reported discovery would look
      * healthy while being unable to receive anything.
      */
-    readonly warning?: string;
+    readonly warning?: StateWarning;
     /**
      * Whether anything is in motion.
      *

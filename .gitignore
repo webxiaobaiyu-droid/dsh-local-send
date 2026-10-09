@@ -7,6 +7,10 @@ node_modules/
 # a transfer left behind while developing. Both are per-machine state.
 .local-send-dev/
 
+# The interface preview is generated from the source and the harness's theme
+# sheets: it is a way to look at the panel, not an artifact anybody installs.
+preview/dist/
+
 # lib/ is intentionally NOT ignored: this plugin is distributed from git, and a
 # checked-in build keeps installation independent of whether the installer runs
 # dependency scripts (pnpm blocks them by default until approved).

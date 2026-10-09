@@ -67,6 +67,7 @@ export declare const zh: {
     readonly directionOut: "发往";
     readonly filesCount: "{count} 个文件";
     readonly filesCountOne: "1 个文件";
+    readonly outcomeMixed: "{arrived} 个成功，{lost} 个未完成";
     readonly 'status.awaiting': "等待确认";
     readonly 'status.transferring': "传输中";
     readonly 'status.done': "已完成";
@@ -85,6 +86,8 @@ export declare const zh: {
     readonly noSession: "请先打开一个会话";
     readonly reveal: "在文件夹中显示";
     readonly savedTo: "已保存到 {path}";
+    readonly 'warning.portUnavailable': "无法监听 {port} 端口，暂时收不到文件：{detail}";
+    readonly 'warning.discoveryUnavailable': "设备发现已停用，看不到同一网络内的其他设备：{detail}";
     readonly errorGeneric: "操作失败：{message}";
     readonly errorOffline: "无法连接到插件后台，请确认插件已加载。";
     readonly retry: "重试";
