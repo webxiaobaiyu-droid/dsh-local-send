@@ -307,8 +307,18 @@ describe('sendPaths against a live receiver', () => {
     expect(outcome.sent).toHaveLength(2)
     // Two directories can each hold `report.pdf`; a batch carrying both must not
     // ask the receiver to save one over the other.
-    expect(readFileSync(join(receiver.inbox, 'report.pdf'), 'utf8')).toBe('one')
-    expect(readFileSync(join(receiver.inbox, 'report (1).pdf'), 'utf8')).toBe('two')
+    //
+    // Which of the two keeps the plain name is deliberately not asserted: the
+    // uploads run two at a time, so whichever the receiver hears from first
+    // claims it. That the two contents both survived, under two distinct names,
+    // is the property that matters.
+    const { readdirSync } = await import('node:fs')
+    const written = readdirSync(receiver.inbox)
+      .filter(name => name !== '.partial')
+      .sort()
+    expect(written).toEqual(['report (1).pdf', 'report.pdf'])
+    const contents = written.map(name => readFileSync(join(receiver.inbox, name), 'utf8')).sort()
+    expect(contents).toEqual(['one', 'two'])
   })
 })
 

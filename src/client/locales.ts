@@ -66,7 +66,9 @@ export const zh = {
   // Incoming
   incomingTitle: '有设备想发送文件',
   incomingFrom: '{alias} 想发送 {count} 个文件',
-  incomingFromOne: '{alias} 想发送 1 个文件',
+  // Naming the file rather than repeating the count: the summary already said
+  // there is one, so the useful thing to add is which one.
+  incomingFromOne: '{alias} 想发送 {name}',
   incomingTotal: '共 {size}',
   accept: '接收',
   decline: '拒绝',
@@ -163,7 +165,7 @@ export const en: Record<LocalSendLocaleKey, string> = {
 
   incomingTitle: 'A device wants to send you files',
   incomingFrom: '{alias} wants to send {count} files',
-  incomingFromOne: '{alias} wants to send 1 file',
+  incomingFromOne: '{alias} wants to send {name}',
   incomingTotal: '{size} in total',
   accept: 'Receive',
   decline: 'Decline',

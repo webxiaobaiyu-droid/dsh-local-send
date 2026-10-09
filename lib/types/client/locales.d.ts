@@ -56,7 +56,7 @@ export declare const zh: {
     readonly pathsInvalid: "这些路径不可用：{list}";
     readonly incomingTitle: "有设备想发送文件";
     readonly incomingFrom: "{alias} 想发送 {count} 个文件";
-    readonly incomingFromOne: "{alias} 想发送 1 个文件";
+    readonly incomingFromOne: "{alias} 想发送 {name}";
     readonly incomingTotal: "共 {size}";
     readonly accept: "接收";
     readonly decline: "拒绝";

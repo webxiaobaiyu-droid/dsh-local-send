@@ -17,6 +17,8 @@
 
 import { createRoot } from 'react-dom/client'
 import { LocalSendPanel } from '../src/client/LocalSendPanel.tsx'
+import { ReceiveToast } from '../src/client/ReceiveToast.tsx'
+import type { ReceiveToastProps } from '../src/client/ReceiveToast.tsx'
 import type { LocalSendPanelInjected, LocalSendPanelProps } from '../src/client/LocalSendPanel.tsx'
 import { zh } from '../src/client/locales.ts'
 import type { LocalSendLocaleKey } from '../src/client/locales.ts'
@@ -298,6 +300,14 @@ function fixedStore(state: LocalSendState): TransferStore {
   }
 }
 
+/** The notification's injected face, with the answer inert. */
+function toastFace(state: LocalSendState) {
+  return {
+    store: fixedStore(state),
+    answer: async () => {},
+  }
+}
+
 /** The injected face, with every action inert. */
 function face(state: LocalSendState): LocalSendPanelInjected {
   return {
@@ -335,4 +345,51 @@ const props = {
 
 const root = document.getElementById('root')
 if (root === null) throw new Error('preview: no #root')
-createRoot(root).render(<LocalSendPanel {...props} />)
+
+/**
+ * Mount the panel, and the receive notification when the scene has one waiting.
+ *
+ * The notification is the product's own `Toast` component driven by this
+ * plugin's copy and rules — the whole surface, both halves of it, rendered for
+ * real. Seeing it matters because it is the only thing this plugin says to
+ * somebody who is not looking at it.
+ */
+const toastProps = { t: translate, ...toastFace(state) } as unknown as ReceiveToastProps
+
+/**
+ * Report a render failure into the document.
+ *
+ * React renders asynchronously, so a throwing component does not surface at the
+ * `render` call — it unmounts the whole tree and leaves a blank page, which on a
+ * screenshot is indistinguishable from a scene that simply has nothing in it.
+ */
+function reportFailure(label: string, error: unknown): void {
+  const box = document.createElement('pre')
+  box.id = 'preview-error'
+  box.style.cssText = 'font: 12px/1.5 ui-monospace, monospace; color: #b00; padding: 16px; white-space: pre-wrap'
+  box.textContent = `${label}: ${String(error)}\n${error instanceof Error ? error.stack ?? '' : ''}`
+  document.body.appendChild(box)
+}
+
+/**
+ * `?only=toast` mounts the notification alone.
+ *
+ * Kept because the two surfaces fail independently and a blank screenshot does
+ * not say which one did: with both mounted, a throw in either unmounts the tree
+ * and looks identical.
+ */
+const only = params.get('only')
+
+createRoot(root, {
+  onUncaughtError: (error: unknown) => { reportFailure('uncaught', error) },
+  onRecoverableError: (error: unknown) => { reportFailure('recoverable', error) },
+}).render(
+  only === 'toast'
+    ? <ReceiveToast {...toastProps} />
+    : (
+      <>
+        <LocalSendPanel {...props} />
+        {params.get('toast') === '1' ? <ReceiveToast {...toastProps} /> : null}
+      </>
+    ),
+)

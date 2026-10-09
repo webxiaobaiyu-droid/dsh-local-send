@@ -151,7 +151,7 @@ DSH_SRC=/path/to/deepseek-harness pnpm run link:host   # 链接 harness 的包�
 pnpm run build          # 两半 + 类型声明
 pnpm run typecheck      # 分别检查 host / client（两半的 Context 合并冲突，必须分开）
 pnpm test               # 136 项测试
-pnpm run preview        # 渲染界面截图（用真实组件与样式表）
+pnpm run preview        # 渲染界面截图到 preview/dist/（真实组件 + 产品主题样式表 + 无头 Chrome）
 pnpm run watch          # 增量构建
 ```
 
@@ -187,6 +187,12 @@ node scripts/verify.mjs
 | `tests/probe.host.spec.ts` | 标定上面那个验证脚本：让它对着本仓库自己的发现循环跑，证明该触发时确实触发 |
 | `tests/reference.client.spec.ts` | 「加入会话」的决策与传递：mention 语法、引号规则、只消费一次、过期；以及接收提醒的规则（同一个 offer 关掉就保持关闭，新的 offer 仍要弹出） |
 | `tests/state.client.spec.ts` | 共享轮询：没人看时零请求、忙碌 500ms / 空闲 2.5s / 后台 8s、失败可恢复、慢请求不叠加、卸载后到达的响应被丢弃 |
+
+### 界面预览
+
+`pnpm run preview` 会把真实组件渲染成截图，用产品自己的主题样式表和它自己的 `Toast` 组件——包括接收提醒，那不是本插件画的界面，是产品组件被本插件的文案和规则驱动。用 `?scene=` 和 `?theme=` 可以取不同场景与配色，`?only=toast` 单独挂载通知（两个界面会各自失败，而空白截图分不清是哪个）。
+
+预览跑在一个临时 HTTP 服务上而不是 `file://`：Chrome 把每个本地文件当独立不透明源，脚本一旦出错只会回报一句 "Script error."，把真正的原因藏起来。
 
 ### 设计取舍记录
 

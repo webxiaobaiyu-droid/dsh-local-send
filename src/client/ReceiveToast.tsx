@@ -38,6 +38,14 @@ import { useTransferState, type TransferStore } from './state.ts'
  */
 const HOLD_MS = 85_000
 
+/**
+ * What sits between the sentence and each action.
+ *
+ * Punctuation rather than copy, which is why it is not in the dictionary — the
+ * same reason the panel joins a row's figures with it directly.
+ */
+const ACTION_SEPARATOR = ' · '
+
 /** Registration-side face the notification reads. */
 export interface ReceiveToastInjected {
   /** The shared state store. */
@@ -95,23 +103,28 @@ export function ReceiveToast(props: ReceiveToastProps): ReactNode {
   if (waiting === undefined) return null
 
   const count = waiting.files.length
+  // The summary states what is being offered and, for a single file, which one.
+  // The detail then adds only what the summary cannot: how much.
   const summary = count === 1
-    ? t('incomingFromOne', { alias: waiting.peerAlias })
+    ? t('incomingFromOne', { alias: waiting.peerAlias, name: waiting.files[0]?.fileName ?? '' })
     : t('incomingFrom', { alias: waiting.peerAlias, count })
-  const detail = `${count === 1 ? waiting.files[0]?.fileName ?? '' : t('filesCount', { count })}`
-    + ` · ${t('incomingTotal', { size: formatBytes(waiting.bytesTotal) })}`
+  const text = `${summary} · ${t('incomingTotal', { size: formatBytes(waiting.bytesTotal) })}`
 
   return (
     <Toast
       // The key is what restarts the hold: a different offer is a new
       // notification rather than the remainder of this one's.
       key={waiting.id}
-      text={`${summary} — ${detail}`}
+      text={text}
       icon={<ReceiveIcon size={18} />}
       holdMs={HOLD_MS}
+      // The separators ride on the actions rather than on the text, which is
+      // what the product's own toasts do: a prefix is read as punctuation
+      // introducing the next action, so it never doubles up on a label the way
+      // a separator baked into the sentence would.
       actions={[
-        { label: t('accept'), onClick: () => { decide(true) } },
-        { label: t('decline'), onClick: () => { decide(false) } },
+        { prefix: ACTION_SEPARATOR, label: t('accept'), onClick: () => { decide(true) } },
+        { prefix: ACTION_SEPARATOR, label: t('decline'), onClick: () => { decide(false) } },
       ]}
       // Fading is not answering: the offer is still waiting, and the panel still
       // shows it with its own buttons. Dismissing only silences this surface.

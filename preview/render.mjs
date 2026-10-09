@@ -13,8 +13,9 @@
  * @module dsh-local-send/preview/render
  */
 
-import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawn } from 'node:child_process'
+import { createServer } from 'node:http'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -27,7 +28,7 @@ const HARNESS = process.env['DSH_SRC'] ?? '/Users/openSource/deepseek-harness'
 /** Where the generated page and its screenshots go. */
 const OUT = join(ROOT, 'preview', 'dist')
 
-/** The theme sheets whose tokens the panel reads. */
+/** The theme sheets whose tokens the panel reads, plus the toast surface. */
 const SHEETS = [
   'packages/client/ui-theme/src/styles/base.css',
   'packages/client/ui-theme/src/styles/design-platform.css',
@@ -42,6 +43,8 @@ const SHOTS = [
   { scene: 'busy', theme: 'dark', name: 'panel-dark' },
   { scene: 'empty', theme: 'light', name: 'empty-light' },
   { scene: 'incoming', theme: 'dark', name: 'incoming-dark' },
+  { scene: 'incoming', theme: 'light', name: 'notify-light', toast: true },
+  { scene: 'incoming', theme: 'dark', name: 'notify-dark', toast: true },
   { scene: 'received', theme: 'light', name: 'received-light' },
   { scene: 'blocked', theme: 'dark', name: 'blocked-dark' },
 ]
@@ -67,6 +70,10 @@ function writePage() {
 <meta charset="utf-8">
 <title>dsh-local-send preview</title>
 <style>${themeCss()}</style>
+<!-- The product's own component stylesheets, emitted by the preview bundle:
+     the notification is its component rather than this plugin's, and it is
+     rendered for real rather than reimplemented. -->
+<style>${readFileSync(join(OUT, 'style.css'), 'utf8')}</style>
 <style>
   /* The panel is a column of the frame in the product; here it is the page. */
   html, body { block-size: 100%; margin: 0; }
@@ -75,6 +82,18 @@ function writePage() {
 </head>
 <body>
 <div id="root"></div>
+<script>
+// A failure inside the bundle would otherwise leave a blank page with nothing
+// said anywhere: a headless screenshot has no console to read. This puts the
+// reason into the document, where a dump or a screenshot will show it.
+window.addEventListener('error', (event) => {
+  const box = document.createElement('pre')
+  box.id = 'preview-error'
+  box.style.cssText = 'font: 12px/1.5 ui-monospace, monospace; color: #b00; padding: 16px; white-space: pre-wrap'
+  box.textContent = 'preview failed: ' + (event.message || event.error) + '\n' + (event.error && event.error.stack || '')
+  document.body.appendChild(box)
+})
+</script>
 <script src="./entry.js"></script>
 </body>
 </html>
@@ -82,22 +101,94 @@ function writePage() {
   writeFileSync(join(OUT, 'index.html'), html, 'utf8')
 }
 
-/** Screenshot one scene with headless Chrome. */
-function shoot(shot) {
-  const url = `file://${join(OUT, 'index.html')}?scene=${shot.scene}&theme=${shot.theme}`
+/**
+ * Serve the preview directory over HTTP for the duration of the capture.
+ *
+ * A `file://` page cannot load a script the way this one needs to: Chrome
+ * treats each file as an opaque origin and reports only "Script error.", with
+ * the actual exception withheld. Serving it is also the honest arrangement —
+ * the product serves these bundles over HTTP — and it is what makes the error
+ * box in the page useful when something goes wrong.
+ *
+ * @returns the origin to capture from, and a function to stop serving.
+ */
+async function servePreview() {
+  const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' }
+  const server = createServer((request, response) => {
+    const name = (request.url ?? '/').split('?')[0]?.replace(/^\//u, '') || 'index.html'
+    const file = join(OUT, name)
+    if (!existsSync(file)) {
+      response.writeHead(404).end()
+      return
+    }
+    const extension = name.slice(name.lastIndexOf('.'))
+    // `connection: close` matters: Chrome's screenshot mode waits for the
+    // network to go idle, and a keep-alive socket to this server keeps it from
+    // ever being idle.
+    response.writeHead(200, {
+      'content-type': types[extension] ?? 'application/octet-stream',
+      connection: 'close',
+    })
+    response.end(readFileSync(file))
+  })
+  const port = await new Promise((resolvePort) => {
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      resolvePort(typeof address === 'object' && address !== null ? address.port : 0)
+    })
+  })
+  return { origin: `http://127.0.0.1:${String(port)}`, stop: () => { server.close() } }
+}
+
+/**
+ * Screenshot one scene with headless Chrome.
+ *
+ * Chrome is spawned and then polled for rather than waited on: it writes the
+ * screenshot and does not reliably exit afterwards, and its stderr carries a
+ * running commentary of display-link warnings that fills a pipe nobody drains.
+ * Waiting for the file to appear is the one signal that means what it says.
+ *
+ * The poll is asynchronous on purpose. The preview is served from this same
+ * process, so a synchronous wait would block the event loop that has to answer
+ * the browser's requests — and the page would never load, which looks exactly
+ * like a browser that cannot start.
+ *
+ * @param origin - the origin the preview is being served from.
+ * @param shot - the scene, palette, and output name.
+ * @returns the path written.
+ */
+async function shoot(origin, shot) {
+  const toast = shot.toast === true ? '&toast=1' : ''
+  const url = `${origin}/index.html?scene=${shot.scene}&theme=${shot.theme}${toast}`
   const target = join(OUT, `${shot.name}.png`)
-  execFileSync(CHROME, [
+  rmSync(target, { force: true })
+
+  const child = spawn(CHROME, [
     '--headless',
     '--disable-gpu',
     '--hide-scrollbars',
+    // The panel is a column of a window in the product; here it is the page.
     '--force-device-scale-factor=2',
     '--window-size=1100,1000',
-    // Chrome writes the screenshot after load; the virtual time budget gives
-    // the render a deterministic window rather than racing it.
-    '--virtual-time-budget=1500',
+    // The bundle carries React and the product's icon set, so it is not small;
+    // the budget gives the parse and the first paint a deterministic window
+    // rather than racing them.
+    '--virtual-time-budget=4000',
     `--screenshot=${target}`,
     url,
-  ], { stdio: 'pipe' })
+  ], { stdio: 'ignore', detached: true })
+
+  const deadline = Date.now() + 40_000
+  while (!existsSync(target) && Date.now() < deadline) {
+    await new Promise((wait) => setTimeout(wait, 100))
+  }
+  try {
+    // The whole process group: Chrome leaves helpers behind otherwise.
+    process.kill(-child.pid, 'SIGKILL')
+  } catch {
+    // Already gone, which is the good case.
+  }
+  if (!existsSync(target)) throw new Error(`preview: no screenshot for ${shot.name} after 40s`)
   return target
 }
 
@@ -108,5 +199,10 @@ writePage()
 if (!existsSync(CHROME)) {
   console.log(`preview: built ${join(OUT, 'index.html')} (no Chrome at ${CHROME}, so no screenshots)`)
 } else {
-  for (const shot of SHOTS) console.log(`preview: ${shot.name} -> ${shoot(shot)}`)
+  const { origin, stop } = await servePreview()
+  try {
+    for (const shot of SHOTS) console.log(`preview: ${shot.name} -> ${await shoot(origin, shot)}`)
+  } finally {
+    stop()
+  }
 }
