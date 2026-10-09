@@ -118,6 +118,17 @@ export declare class MulticastDiscovery {
     private stopped;
     /** Whether the socket completed its bind; before that, an error is fatal. */
     private bound;
+    /**
+     * Resolves when the current socket is listening.
+     *
+     * A send requested before the bind has to wait for it rather than be dropped.
+     * A dgram socket refuses `setMulticastInterface` outright while unbound, so a
+     * send that raced the bind would silently announce nothing — and the callers
+     * that send eagerly (a rename, or the moment the transfer API finishes
+     * binding) are exactly the ones whose whole point is that the peer hears about
+     * it now rather than at the next tick.
+     */
+    private listening;
     /** Addresses the current socket has joined, so a re-join can be diffed. */
     private readonly joined;
     /** Serializes announces, so per-interface sends cannot interleave. */

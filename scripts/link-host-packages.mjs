@@ -39,6 +39,10 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const HOST_PACKAGES = {
   'cordis': 'vendor/cordis',
   'dsh-client-locale': 'packages/client/locale',
+  // The client module system owns the manifest contract this plugin's package
+  // and bundle patch have to satisfy, so one test validates against its parser
+  // rather than a copy of its rules.
+  'dsh-client-modules': 'packages/client/modules',
   'dsh-client-ui-conversation': 'packages/client/ui-conversation',
   'dsh-client-ui-layout': 'packages/client/ui-layout',
   'dsh-client-ui-primitives': 'packages/client/ui-primitives',

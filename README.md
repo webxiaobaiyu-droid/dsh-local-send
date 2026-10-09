@@ -150,11 +150,29 @@ pnpm install
 DSH_SRC=/path/to/deepseek-harness pnpm run link:host   # 链接 harness 的包（每次 pnpm install 后要重跑）
 pnpm run build          # 两半 + 类型声明
 pnpm run typecheck      # 分别检查 host / client（两半的 Context 合并冲突，必须分开）
-pnpm test               # 90 项测试
+pnpm test               # 105 项测试
+pnpm run preview        # 渲染界面截图（用真实组件与样式表）
 pnpm run watch          # 增量构建
 ```
 
 改动后需要重启 DSH 才会生效（host 半边的代码没有文件监听）。
+
+### 确认插件真的装上了
+
+```bash
+node scripts/verify.mjs
+```
+
+它会检查九件事，其中三件是只有对着**运行中的** DSH 才能验证的：
+
+| 检查 | 证明了什么 |
+|---|---|
+| 传输 API 在监听 | host 半边真的激活了，而不只是被读到了 |
+| `/plugins/dsh-local-send/client.js` 可访问 | 客户端半边进了 boot 图 |
+| 组播主动广播被听到 | 别的设备能发现你 |
+| 收到广播后回拨 /register | 你能发现别人 |
+
+后两项用一个**临时的假 LocalSend 对端**完成：它在组播组里广播自己，然后等着被回拨。这不需要 DSH 的凭据（传输 API 是插件自己开的监听，不走应用鉴权），也不需要人工点确认。
 
 ### 测试覆盖什么
 
@@ -165,6 +183,8 @@ pnpm run watch          # 增量构建
 | `tests/roundtrip.host.spec.ts` | 发送端 ↔ 接收端环回：批量、大文件分块、失败撤回、重名去重 |
 | `tests/plugin.host.spec.ts` | host 入口按 Loader 的方式激活：路由注册、流式模式、优雅卸载 |
 | `tests/client-bundle.client.spec.ts` | 浏览器 bundle 的包装契约、导出、四个槽位注册 |
+| `tests/manifest.host.spec.ts` | 包本身能否被安装：用**产品自己的 `parseDshClient`** 校验清单、bundle patch 的 YAML 形状、入口文件存在、模块图无环 |
+| `tests/probe.host.spec.ts` | 标定上面那个验证脚本：让它对着本仓库自己的发现循环跑，证明该触发时确实触发 |
 
 ### 设计取舍记录
 
@@ -175,6 +195,7 @@ pnpm run watch          # 增量构建
 - **拖拽用计数器而非布尔值**（`dragleave` 会在进入子元素时触发）→ `src/client/LocalSendPanel.tsx` 顶部
 - **"加入会话"为什么走 `@路径` 引用而不是附件上传** → `src/client/ComposerEntry.tsx` 顶部
 - **发送端为什么必须发 `cancel`** → `src/outbound.ts` 的 `cancelOffer`
+- **为什么 `setMulticastInterface` 之前必须等 bind** → `src/discovery.ts` 的 `listening`
 
 ---
 

@@ -146,6 +146,17 @@ export class MulticastDiscovery {
   private stopped = false
   /** Whether the socket completed its bind; before that, an error is fatal. */
   private bound = false
+  /**
+   * Resolves when the current socket is listening.
+   *
+   * A send requested before the bind has to wait for it rather than be dropped.
+   * A dgram socket refuses `setMulticastInterface` outright while unbound, so a
+   * send that raced the bind would silently announce nothing — and the callers
+   * that send eagerly (a rename, or the moment the transfer API finishes
+   * binding) are exactly the ones whose whole point is that the peer hears about
+   * it now rather than at the next tick.
+   */
+  private listening: Promise<void> = Promise.resolve()
   /** Addresses the current socket has joined, so a re-join can be diffed. */
   private readonly joined = new Set<string>()
   /** Serializes announces, so per-interface sends cannot interleave. */
@@ -185,8 +196,11 @@ export class MulticastDiscovery {
     socket.on('message', (buffer, remote) => {
       this.receive(buffer, remote.address)
     })
+    let announceReady: () => void = () => {}
+    this.listening = new Promise<void>((resolve) => { announceReady = resolve })
     socket.on('listening', () => {
       this.bound = true
+      announceReady()
       try {
         socket.setMulticastTTL(1)
         // Loopback stays on: two members on one machine — a second DSH profile,
@@ -253,6 +267,11 @@ export class MulticastDiscovery {
 
   /** Send the announcement once per local address, sequencing the interface switch. */
   private async sendOnEachInterface(): Promise<void> {
+    // Waiting here is what makes an eager send land: the options below are
+    // refused while the socket is unbound, and a `continue` on that refusal
+    // would turn "announce now" into "announce nothing".
+    await this.listening
+    if (this.socket === undefined) return
     const payload = Buffer.from(JSON.stringify(this.announce()))
     for (const local of localAddresses()) {
       const socket = this.socket

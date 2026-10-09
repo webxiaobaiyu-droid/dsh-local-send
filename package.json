@@ -68,6 +68,7 @@
     "react-dom": "^18.2.0",
     "tsdown": "^0.22.2",
     "typescript": "~5.9.0",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "yaml": "^2.9.1"
   }
 }

@@ -14,6 +14,10 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowImportingTsExtensions": true,
+    // The development scripts under `scripts/` are plain JavaScript, and one of
+    // them is calibrated by the test suite. Reading them is what keeps that
+    // calibation honest rather than a second copy of the same probe.
+    "allowJs": true,
     "noEmit": true,
     "types": ["node"]
   },
