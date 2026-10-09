@@ -1,0 +1,12 @@
+node_modules/
+
+# Local agent workspace: session scratch and notes, never part of the package.
+.workbuddy/
+
+# The self-signed TLS identity this plugin generates on first run, and anything
+# a transfer left behind while developing. Both are per-machine state.
+.local-send-dev/
+
+# lib/ is intentionally NOT ignored: this plugin is distributed from git, and a
+# checked-in build keeps installation independent of whether the installer runs
+# dependency scripts (pnpm blocks them by default until approved).

@@ -1,0 +1,15 @@
+# The dsh-local-send bundle patch: one Loader row for this package.
+#
+# One row serves both halves. The row mounts the Host half (`main`), and because
+# this package's manifest declares `dsh.client.platform: web`, that same row is
+# what the client module table scans to find the browser half behind
+# `exports["./client"]` — a package no row mounts never reaches the browser.
+#
+# The row carries no `config`: every field has a default, so the plugin mounts
+# bare and works out of the box. A deployment that wants a different receive
+# directory, device name, or transfer port overrides this row by id in its own
+# profile patch — see the README's configuration table.
+
+- insert:
+    - id: local-send
+      name: 'dsh-local-send'
