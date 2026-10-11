@@ -2,17 +2,20 @@
  * Nearby transfer, browser half: where the plugin draws, and the actions every
  * one of those places asks for.
  *
- * Six seats, each doing one job:
+ * Five seats, each doing one job:
  *
  * - the **sidebar entry** and the **panel** it opens — who is around, what is
  *   moving, and what arrived;
  * - the **notification** in the frame-wide overlay — an offer has to reach
  *   somebody who is not looking at the panel;
+ * - the **floating companion** in the same overlay — the transfer's presence and
+ *   its progress, wherever in the window the user happens to be. Two surfaces that
+ *   used to carry this are gone deliberately: the banner above the composer sat in
+ *   the typing path, which is the one strip of the window the product keeps quiet,
+ *   and the mark in the conversation header could only be seen in the conversation
+ *   it belonged to;
  * - the **context menu** in the same overlay — right-click a file anywhere DSH
  *   shows one and send it, without visiting the panel at all;
- * - the **companion** in the conversation header and the **banner** above its
- *   composer — the transfer's presence while the user is working, which is where
- *   they are when a file arrives;
  * - the **composer hook**, which is the only thing that can put a reference into
  *   the draft.
  *
@@ -50,16 +53,23 @@ import {
 } from './api.ts'
 import { ComposerEntry, type ComposerEntryInjected } from './ComposerEntry.tsx'
 import { ContextSendMenu, type ContextSendMenuInjected } from './ContextSendMenu.tsx'
-import { FishCompanion, type FishCompanionInjected } from './FishCompanion.tsx'
+import { FloatingBuddy, type FloatingBuddyInjected } from './FloatingBuddy.tsx'
 import { flash } from './flash.ts'
 import { LocalSendPanel, type LocalSendPanelInjected } from './LocalSendPanel.tsx'
 import { en, zh, type LocalSendLocaleKey } from './locales.ts'
+import { formatMention } from './mention.ts'
 import { HandoffIcon } from './icons.tsx'
 import { requestReference } from './pending.ts'
 import { NoticeToast, type NoticeToastInjected } from './NoticeToast.tsx'
+import {
+  targetMessage,
+  targetTree,
+  type ProjectRow,
+  type SessionRow,
+  type TargetTree,
+} from './session-target.ts'
 import { createTransferStore } from './state.ts'
 import { STYLE_ID, styles } from './styles.ts'
-import { TransferBanner, type TransferBannerInjected } from './TransferBanner.tsx'
 import { fetchState } from './api.ts'
 import type { SendPathsResponse } from '../types.ts'
 
@@ -92,12 +102,72 @@ const UPLOAD_CONCURRENCY = 2
  */
 export const inject = ['slots', 'locale', 'layout']
 
+/**
+ * One session as this plugin reads it from the session list.
+ *
+ * Every field beyond `retainedBy` is optional here even though the service
+ * declares most of them required: this is an untrusted structural view of another
+ * package's snapshot, taken by `ctx.get` rather than by an import, so a field this
+ * plugin did not verify must not be able to produce `undefined` deep inside a
+ * render.
+ */
+interface SessionSnapshotRow {
+  readonly retainedBy: Readonly<Record<string, number>>
+  readonly displayTitle?: string | undefined
+  readonly title?: string | undefined
+  readonly running?: boolean | undefined
+  readonly blank?: boolean | undefined
+  readonly updatedAt?: number | undefined
+  readonly origin?: string | undefined
+}
+
 /** The session list service, when this deployment has one. */
 interface SessionList {
   readonly list: {
-    getSnapshot(): {
-      readonly byId: Readonly<Record<string, { readonly retainedBy: Readonly<Record<string, number>> }>>
-    }
+    getSnapshot(): { readonly byId: Readonly<Record<string, SessionSnapshotRow>> }
+  }
+}
+
+/**
+ * The session list, plus the two calls that address one session by id.
+ *
+ * Kept apart from {@link SessionList} because they are separate capabilities of
+ * the same service: a deployment that lists sessions but cannot retain one still
+ * gets a working panel, and only the send-into-a-conversation action is refused.
+ */
+interface SessionAddressing extends SessionList {
+  retain(id: string, options: { readonly source: string }): SessionReference
+}
+
+/** What one retained session can be asked to do. */
+interface SessionPrompt {
+  prompt(
+    content: readonly { readonly type: 'text'; readonly text: string }[],
+    mode: 'queue' | 'steer',
+  ): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: { readonly message: string } }>
+}
+
+/** A held session, released when the caller is done with it. */
+interface SessionReference {
+  readonly ready: Promise<{ readonly sessionId: string; readonly session: SessionPrompt }>
+  release(): void
+}
+
+/** One project, as the workspace list publishes it. */
+interface WorkspaceSnapshot {
+  readonly items: readonly {
+    readonly workspaceId: string
+    readonly path: string
+    readonly title: string
+    readonly sessionIds: readonly string[]
+    readonly updatedAt?: string | undefined
+  }[]
+}
+
+/** The workspace (project) list service, when this deployment has one. */
+interface WorkspaceList {
+  readonly list: {
+    getSnapshot(): WorkspaceSnapshot
   }
 }
 
@@ -110,7 +180,7 @@ function sessionsOf(ctx: ClientContext): SessionList | undefined {
 }
 
 /**
- * Whether a conversation is currently open in the centre column.
+ * The session currently open in the centre column.
  *
  * The product's own derivation: the main column retains exactly one session, and
  * that is the one a composer would be bound to. There is no selected-session
@@ -118,13 +188,106 @@ function sessionsOf(ctx: ClientContext): SessionList | undefined {
  * the retention count is the contract every first-party caller uses too.
  *
  * @param ctx - client context.
+ * @returns the open session's id, or `undefined` when none is bound.
+ */
+function currentSessionId(ctx: ClientContext): string | undefined {
+  const sessions = sessionsOf(ctx)
+  if (sessions === undefined) return undefined
+  return Object.entries(sessions.list.getSnapshot().byId)
+    .find(([, row]) => (row.retainedBy['mainView'] ?? 0) > 0)?.[0]
+}
+
+/**
+ * Every known session, in the shape the picker's model wants.
+ *
+ * Defaults are filled in here rather than trusted from the snapshot: a session row
+ * missing `displayTitle` should read as a nameless session, not crash the dialog.
+ *
+ * @param ctx - client context.
+ * @returns session rows keyed by id, empty when the service is absent.
+ */
+function sessionRowsOf(ctx: ClientContext): Readonly<Record<string, SessionRow>> {
+  const sessions = sessionsOf(ctx)
+  if (sessions === undefined) return {}
+  const rows: Record<string, SessionRow> = {}
+  for (const [id, row] of Object.entries(sessions.list.getSnapshot().byId)) {
+    rows[id] = {
+      id,
+      displayTitle: typeof row.displayTitle === 'string' && row.displayTitle !== '' ? row.displayTitle : id,
+      ...typeof row.title === 'string' ? { title: row.title } : {},
+      running: row.running === true,
+      blank: row.blank === true,
+      updatedAt: typeof row.updatedAt === 'number' ? row.updatedAt : 0,
+      ...row.origin === 'subagent' ? { origin: 'subagent' as const } : {},
+    }
+  }
+  return rows
+}
+
+/**
+ * Every project, in the shape the picker's model wants.
+ *
+ * @param ctx - client context.
+ * @returns project rows, empty when the service is absent.
+ */
+function projectsOf(ctx: ClientContext): readonly ProjectRow[] {
+  const workspaces = ctx.get('workspaces') as WorkspaceList | undefined
+  const items = workspaces?.list.getSnapshot().items
+  if (!Array.isArray(items)) return []
+  return items.map(item => ({
+    workspaceId: item.workspaceId,
+    path: item.path,
+    title: item.title,
+    sessionIds: item.sessionIds,
+    // An absent timestamp reads as the empty string, which the ordering rule
+    // treats as oldest — the same answer as "we do not know when this was".
+    updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : '',
+  }))
+}
+
+/**
+ * Whether a conversation is currently open in the centre column.
+ *
+ * @param ctx - client context.
  * @returns whether a session is bound to the main column.
  */
 function hasOpenSession(ctx: ClientContext): boolean {
-  const sessions = sessionsOf(ctx)
-  if (sessions === undefined) return false
-  return Object.values(sessions.list.getSnapshot().byId)
-    .some(row => (row.retainedBy['mainView'] ?? 0) > 0)
+  return currentSessionId(ctx) !== undefined
+}
+
+/**
+ * Deliver a message carrying file references into one conversation.
+ *
+ * The session does not have to be the one on screen: the prompt is addressed by
+ * id and goes straight to the host, which is what makes "send this to *that*
+ * project" possible at all. It does have to be retained first — the service
+ * refuses to address a session nothing is holding — and the hold is released as
+ * soon as the message is accepted, because retaining a session pulls its history.
+ *
+ * @param ctx - client context.
+ * @param sessionId - the conversation to send into.
+ * @param paths - absolute paths of the received files.
+ * @throws when the plugin cannot write those paths as references, or the host refuses the message.
+ */
+async function sendToSession(
+  ctx: ClientContext,
+  sessionId: string,
+  paths: readonly string[],
+): Promise<void> {
+  const message = targetMessage(paths, formatMention)
+  if (message === undefined) throw new Error('those files cannot be referenced')
+  const sessions = ctx.get('sessions') as SessionAddressing | undefined
+  if (sessions === undefined || typeof sessions.retain !== 'function') {
+    throw new Error('this deployment has no session service')
+  }
+  const reference = sessions.retain(sessionId, { source: 'localSend' })
+  try {
+    const binding = await reference.ready
+    const result = await binding.session.prompt([{ type: 'text', text: message }], 'queue')
+    if (result.ok !== true) throw new Error(result.error.message)
+  } finally {
+    reference.release()
+  }
 }
 
 /**
@@ -286,6 +449,15 @@ export function apply(ctx: ClientContext): void {
     inspectPaths: async (paths: readonly string[]) => (await inspect(paths)).candidates,
     addToConversation,
     hasSession: (): boolean => hasOpenSession(ctx),
+    /** Every project and session a received file could be sent to. */
+    readTargets: (): TargetTree => targetTree({
+      projects: projectsOf(ctx),
+      sessions: sessionRowsOf(ctx),
+      currentSessionId: currentSessionId(ctx),
+    }),
+    sendToSession: async (sessionId: string, paths: readonly string[]): Promise<void> => {
+      await sendToSession(ctx, sessionId, paths)
+    },
     /** Bring the transfer panel forward, for a surface that is only a summary. */
     openPanel: (): void => { ctx.layout.selectPanel(PANEL_ID) },
   }
@@ -298,18 +470,10 @@ export function apply(ctx: ClientContext): void {
 
   const composerFace = (): ComposerEntryInjected => ({ hasSession: facade.hasSession })
 
-  const buddyFace = (): FishCompanionInjected => ({
+  const buddyFace = (): FloatingBuddyInjected => ({
     store,
     answer: answerOffer,
     cancel: facade.cancel,
-    revealFile: facade.revealFile,
-    addToConversation,
-    openPanel: facade.openPanel,
-  })
-
-  const bannerFace = (): TransferBannerInjected => ({
-    store,
-    answer: answerOffer,
     openPanel: facade.openPanel,
   })
 
@@ -356,26 +520,18 @@ export function apply(ctx: ClientContext): void {
     inject: menuFace,
   }, ContextSendMenu))
 
-  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
-    name: 'conversation.session.header.utilities',
-    id: 'local-send.companion',
-    // Positive, so the companion sits to the right of the shipped utilities,
-    // which register at -10 and -5 beside the overflow menu at 0.
-    order: 10,
+  // The floating companion shares the overlay with the notification and the
+  // context menu. It is its own cell rather than part of the notification because
+  // the two answer different questions — "someone is asking you something" and
+  // "here is what is moving" — and because this one is draggable, which is a
+  // property of a surface the user can move out of the way.
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'local-send.buddy',
+    order: 25,
     locale: NS,
     inject: buddyFace,
-  }, FishCompanion))
-
-  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
-    name: 'conversation.input.dock',
-    id: 'local-send.banner',
-    // The shipped docks run todo (0), goal (10), queue (20) top to bottom. An
-    // offer is the one thing that has to be read before typing, so it goes last
-    // and therefore nearest the composer.
-    order: 30,
-    locale: NS,
-    inject: bannerFace,
-  }, TransferBanner))
+  }, FloatingBuddy))
 
   ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
     name: 'conversation.input.left',

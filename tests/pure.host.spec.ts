@@ -23,7 +23,7 @@ import {
   uniqueFileName,
   type DeviceInfo,
 } from '../src/protocol.ts'
-import { formatAge, formatBytes, formatEta, formatRate, percentOf, shortenFileName } from '../src/client/format.ts'
+import { ageOf, etaOf, formatBytes, formatRate, percentOf, shortenFileName } from '../src/client/format.ts'
 import { formatMention } from '../src/client/mention.ts'
 
 /** One well-formed device identity, for tests to spoil. */
@@ -224,7 +224,7 @@ describe('figures', () => {
     expect(percentOf(Number.NaN, 10)).toBe(0)
     expect(percentOf(1, 0)).toBe(0)
     expect(formatRate(100, 0)).toBeUndefined()
-    expect(formatEta(100, 0)).toBeUndefined()
+    expect(etaOf(100, 0)).toBeUndefined()
   })
 
   it('clamps a percentage into range', () => {
@@ -240,11 +240,13 @@ describe('figures', () => {
 
   it('ages coarsely and then says nothing', () => {
     const now = 1_000_000_000
-    expect(formatAge(now - 1_000, now)).toBe('just now')
-    expect(formatAge(now - 30_000, now)).toBe('30s ago')
-    expect(formatAge(now - 120_000, now)).toBe('2m ago')
+    // The result is a dictionary key and its figures rather than a sentence: the
+    // words are the dictionary's, and this module never writes one.
+    expect(ageOf(now - 1_000, now)).toEqual({ key: 'ageNow', params: {} })
+    expect(ageOf(now - 30_000, now)).toEqual({ key: 'ageSeconds', params: { seconds: 30 } })
+    expect(ageOf(now - 120_000, now)).toEqual({ key: 'ageMinutes', params: { minutes: 2 } })
     // Past an hour the column is not worth a figure.
-    expect(formatAge(now - 7_200_000, now)).toBeUndefined()
+    expect(ageOf(now - 7_200_000, now)).toBeUndefined()
   })
 
   it('shortens a file name from the middle, keeping the extension', () => {

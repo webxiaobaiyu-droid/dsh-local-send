@@ -45,10 +45,12 @@ import {
   type TransferFileRow,
   type TransferRow,
 } from '../types.ts'
-import { formatAge, formatBytes, percentOf, shortenFileName } from './format.ts'
+import { ageOf, etaOf, formatBytes, formatRate, percentOf, shortenFileName } from './format.ts'
 import { useTransferState, type TransferStore } from './state.ts'
 import { DeviceIcon, FolderIcon, ReceiveIcon, SearchIcon, SendIcon } from './icons.tsx'
 import type { LocalSendLocaleKey } from './locales.ts'
+import { SessionPicker } from './SessionPicker.tsx'
+import type { TargetTree } from './session-target.ts'
 
 /** Registration-side face the panel reads and acts through. */
 export interface LocalSendPanelInjected {
@@ -97,6 +99,21 @@ export interface LocalSendPanelInjected {
   addToConversation: (path: string) => void
   /** Whether a conversation is open for a reference to land in. */
   hasSession: () => boolean
+  /**
+   * Every project and conversation a received file could be sent to.
+   *
+   * Read on demand rather than held in state: the picker is opened by a press and
+   * the answer is wanted then, and a snapshot taken at mount could name a session
+   * the user has since deleted.
+   */
+  readTargets: () => TargetTree
+  /**
+   * Deliver a message carrying those files into one conversation, by id.
+   *
+   * Addressed by id rather than to "the open conversation" on purpose: the whole
+   * point of the picker is that the target need not be the one on screen.
+   */
+  sendToSession: (sessionId: string, paths: readonly string[]) => Promise<void>
 }
 
 /** Full component props assembled by the main slot renderer. */
@@ -129,6 +146,7 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
   const {
     t, store, sendFiles, sendLocalPaths, answer, cancel, retry,
     renameDevice, scanNow, revealFile, inspectPaths, addToConversation, hasSession,
+    readTargets, sendToSession,
   } = props
   const read = useTransferState(store)
   const [dropTarget, setDropTarget] = useState<string | undefined>(undefined)
@@ -146,6 +164,16 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
    * a chooser with a single option is a step that exists only to be dismissed.
    */
   const [staged, setStaged] = useState<readonly File[] | undefined>(undefined)
+  /**
+   * The received files the picker is choosing a conversation for.
+   *
+   * Held as the paths rather than as the transfer id, because what the send
+   * actually needs is the files on disk: a row can be re-read, but the paths are
+   * the thing the message has to name.
+   */
+  const [pickFor, setPickFor] = useState<readonly string[] | undefined>(undefined)
+  /** Whether a send into a chosen conversation is in flight. */
+  const [sending, setSending] = useState(false)
   /** Nested drag depth; see the module note on why this is a counter. */
   const dragDepth = useRef(0)
   /** The hidden picker the "choose files" button drives. */
@@ -175,6 +203,42 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
   const refresh = useCallback(async (): Promise<void> => {
     await store.refresh()
   }, [store])
+
+  /**
+   * Put a received file's reference into the composer of the open conversation.
+   *
+   * Warned here rather than after the switch, because the switch is the problem:
+   * the centre column would go to a blank-session screen and the reference would
+   * sit parked behind it with nothing on screen to explain it.
+   *
+   * @param path - absolute path of a received file.
+   */
+  const addReceived = useCallback((path: string): void => {
+    if (!hasSession()) {
+      setNotice({ text: t('noSession'), tone: 'warn' })
+      return
+    }
+    addToConversation(path)
+  }, [hasSession, addToConversation, t])
+
+  /** Show one received file in the platform's file manager. */
+  const revealOne = useCallback((path: string): void => {
+    void run(`reveal:${path}`, async () => { await revealFile(path) })
+  }, [run, revealFile])
+
+  /**
+   * Ask which conversation these files should go into.
+   *
+   * The picker's answer is the send, so nothing is sent from here: this only
+   * records what is being sent and opens the dialog.
+   *
+   * @param paths - absolute paths of files that are on disk.
+   */
+  const openPickerFor = useCallback((paths: readonly string[]): void => {
+    if (paths.length === 0) return
+    setNotice(undefined)
+    setPickFor(paths)
+  }, [])
 
   const peers = read.status === 'ready' ? read.state.peers : []
   const reachable = useMemo(() => peers.filter(peer => peer.reachable), [peers])
@@ -294,23 +358,6 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
                 <button
                   type="button"
                   className="dls-action"
-                  disabled={busyAction === 'scan'}
-                  onClick={() => {
-                    void run('scan', async () => {
-                      const result = await scanNow()
-                      setNotice({
-                        text: result.found > 0 ? t('scanFound', { count: result.found }) : t('scanEmpty'),
-                        tone: 'info',
-                      })
-                    })
-                  }}
-                >
-                  <SearchIcon size={13} />
-                  {busyAction === 'scan' ? t('scanning') : t('rescan')}
-                </button>
-                <button
-                  type="button"
-                  className="dls-action"
                   data-tone="quiet"
                   title={t('openInbox')}
                   aria-label={t('openInbox')}
@@ -399,6 +446,57 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
           )
           : null}
 
+        {/* Questions first, then movement, then everything that is only a
+            record. The order is the panel's whole argument: an offer is waiting
+            on the user, a live transfer is worth watching, and a finished one is
+            history — reading top to bottom is reading by urgency. */}
+        {incoming.map(transfer => (
+          <IncomingOffer
+            key={transfer.id}
+            transfer={transfer}
+            busy={busyAction === `answer:${transfer.id}`}
+            t={t}
+            onAnswer={(accept, fileIds) => {
+              void run(`answer:${transfer.id}`, async () => {
+                await answer(transfer.id, accept, fileIds)
+                await refresh()
+              })
+            }}
+          />
+        ))}
+
+        {read.status === 'ready'
+          ? (
+            <Transfers
+              variant="live"
+              transfers={read.state.transfers.filter(
+                // An offer still waiting is drawn by its own card above, with
+                // Accept and Decline on it. Listing it again as a transfer would
+                // show the same pending thing twice, under two sets of verbs.
+                transfer => !(transfer.direction === 'incoming' && transfer.status === 'awaiting'),
+              )}
+              busyAction={busyAction}
+              t={t}
+              now={Date.now()}
+              onAddToConversation={addReceived}
+              onSendToSession={openPickerFor}
+              onReveal={revealOne}
+              onStop={(transferId) => {
+                void run(`stop:${transferId}`, async () => {
+                  await cancel(transferId)
+                  await refresh()
+                })
+              }}
+              onRetry={(transferId) => {
+                void run(`retry:${transferId}`, async () => {
+                  await retry(transferId)
+                  await refresh()
+                })
+              }}
+            />
+          )
+          : null}
+
         {staged !== undefined
           ? (
             <StagedFiles
@@ -419,20 +517,28 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
           )
           : null}
 
-        {incoming.map(transfer => (
-          <IncomingOffer
-            key={transfer.id}
-            transfer={transfer}
-            busy={busyAction === `answer:${transfer.id}`}
-            t={t}
-            onAnswer={(accept, fileIds) => {
-              void run(`answer:${transfer.id}`, async () => {
-                await answer(transfer.id, accept, fileIds)
-                await refresh()
-              })
-            }}
-          />
-        ))}
+        {read.status === 'ready'
+          ? (
+            <Nearby
+              peers={read.state.peers}
+              dragging={dragging}
+              dropTarget={dropTarget}
+              busyAction={busyAction}
+              t={t}
+              onDragOverTile={setDropTarget}
+              onDropOnTile={dropOn}
+              onScan={() => {
+                void run('scan', async () => {
+                  const result = await scanNow()
+                  setNotice({
+                    text: result.found > 0 ? t('scanFound', { count: result.found }) : t('scanEmpty'),
+                    tone: 'info',
+                  })
+                })
+              }}
+            />
+          )
+          : null}
 
         {showPaths && read.status === 'ready'
           ? (
@@ -453,44 +559,17 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
 
         {read.status === 'ready'
           ? (
-            <Nearby
-              peers={read.state.peers}
-              dragging={dragging}
-              dropTarget={dropTarget}
-              busyAction={busyAction}
-              t={t}
-              onDragOverTile={setDropTarget}
-              onDropOnTile={dropOn}
-            />
-          )
-          : null}
-
-        {read.status === 'ready'
-          ? (
             <Transfers
+              variant="history"
               transfers={read.state.transfers.filter(
-                // An offer still waiting is drawn by its own card above, with
-                // Accept and Decline on it. Listing it again as a transfer would
-                // show the same pending thing twice, under two sets of verbs.
                 transfer => !(transfer.direction === 'incoming' && transfer.status === 'awaiting'),
               )}
               busyAction={busyAction}
               t={t}
               now={Date.now()}
-              onAddToConversation={(path) => {
-                // Warned here rather than after the switch, because the switch is
-                // the problem: the centre column would go to a blank-session
-                // screen and the reference would sit parked with nothing on
-                // screen to explain it.
-                if (!hasSession()) {
-                  setNotice({ text: t('noSession'), tone: 'warn' })
-                  return
-                }
-                addToConversation(path)
-              }}
-              onReveal={(path) => {
-                void run(`reveal:${path}`, async () => { await revealFile(path) })
-              }}
+              onAddToConversation={addReceived}
+              onSendToSession={openPickerFor}
+              onReveal={revealOne}
               onStop={(transferId) => {
                 void run(`stop:${transferId}`, async () => {
                   await cancel(transferId)
@@ -507,6 +586,29 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
           )
           : null}
       </div>
+
+      <SessionPicker
+        open={pickFor !== undefined}
+        busy={sending}
+        tree={pickFor === undefined ? { projects: [] } : readTargets()}
+        t={t}
+        onClose={() => { setPickFor(undefined) }}
+        onPick={(sessionId, label) => {
+          const paths = pickFor ?? []
+          setSending(true)
+          void sendToSession(sessionId, paths).then(
+            () => {
+              setSending(false)
+              setPickFor(undefined)
+              setNotice({ text: t('sentToSession', { title: label }), tone: 'info' })
+            },
+            (error: unknown) => {
+              setSending(false)
+              setNotice({ text: t('errorGeneric', { message: describe(error) }), tone: 'error' })
+            },
+          )
+        }}
+      />
     </div>
   )
 }
@@ -541,27 +643,17 @@ function ThisDevice(
   const address = state.device.addresses[0]
 
   return (
-    <section className="dls-section">
-      <div className="dls-sectionHead">
-        <span className="dls-sectionTitle">{t('thisDevice')}</span>
-        {renaming
-          ? null
-          : (
-            <button type="button" className="dls-action" data-tone="quiet" onClick={onStartRename}>
-              {t('rename')}
-            </button>
-          )}
-      </div>
-
+    <section className="dls-ident" aria-label={t('thisDevice')}>
       {renaming
         ? (
-          <div className="dls-pathsRow" style={{ justifyContent: 'flex-start' }}>
+          <div className="dls-identRename">
             <input
               className="dls-input"
               value={draft}
               autoFocus
               maxLength={64}
               placeholder={t('renamePlaceholder')}
+              aria-label={t('renamePlaceholder')}
               onChange={(event) => { setDraft(event.target.value) }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && draft.trim().length > 0) onRename(draft.trim())
@@ -581,24 +673,35 @@ function ThisDevice(
           </div>
         )
         : (
-          <div className="dls-identity">
-            <span className="dls-state" data-ok={state.device.serving ? 'true' : 'false'}>
-              {state.device.alias} · {state.device.serving ? t('serving') : t('notServing')}
-            </span>
-            <span className="dls-fact">
-              <span className="dls-factKey">{t('addressLabel')}</span>
-              <span className="dls-factValue">
-                {address === undefined ? t('noAddress') : `${address}:${String(state.device.port)}`}
+          <>
+            <span className="dls-identBody">
+              {/* One dot for the only state that changes whether anything can
+                  arrive at all. The name beside it is what the other device
+                  will show, which is why renaming lives here and not in a
+                  settings row somewhere else. */}
+              <span className="dls-identName">
+                <span className="dls-stateDot" data-ok={state.device.serving ? 'true' : 'false'} aria-hidden />
+                {state.device.alias}
+              </span>
+              <span className="dls-identMeta">
+                <span data-tone={state.device.serving ? 'ok' : 'warn'}>
+                  {state.device.serving ? t('serving') : t('notServing')}
+                </span>
+                {/* The address, then where files land. Both are facts the user
+                    needs to act on — one to tell the other device, one to point
+                    the agent at — so neither is behind a disclosure. */}
+                <span className="dls-identSep" aria-hidden>·</span>
+                <span className="dls-identFact" title={t('addressLabel')}>
+                  {address === undefined ? t('noAddress') : `${address}:${String(state.device.port)}`}
+                </span>
+                <span className="dls-identSep" aria-hidden>·</span>
+                <span className="dls-identFact" title={state.inbox}>{state.inbox}</span>
               </span>
             </span>
-            {/* Where received files go, said once and in full. It is a real
-                directory the agent can be pointed at, and a user who has just
-                been told a file arrived needs to know where. */}
-            <span className="dls-fact">
-              <span className="dls-factKey">{t('inboxLabel')}</span>
-              <span className="dls-factValue" title={state.inbox}>{state.inbox}</span>
-            </span>
-          </div>
+            <button type="button" className="dls-action" data-tone="quiet" onClick={onStartRename}>
+              {t('rename')}
+            </button>
+          </>
         )}
     </section>
   )
@@ -626,7 +729,7 @@ function StagedFiles(
     <section className="dls-section dls-staged">
       <div className="dls-sectionHead">
         <span className="dls-sectionTitle">
-          {t('sendFiles')}
+          {t('stagedTitle')}
           <span className="dls-count">{fileCountLabel(t, files.length)}</span>
         </span>
         <span className="dls-rowActions">
@@ -663,7 +766,7 @@ function StagedFiles(
 
 /** The devices around this one, each a drop target. */
 function Nearby(
-  { peers, dragging, dropTarget, busyAction, t, onDragOverTile, onDropOnTile }: {
+  { peers, dragging, dropTarget, busyAction, t, onDragOverTile, onDropOnTile, onScan }: {
     readonly peers: readonly PeerRow[]
     readonly dragging: boolean
     readonly dropTarget: string | undefined
@@ -671,17 +774,31 @@ function Nearby(
     readonly t: Translate
     readonly onDragOverTile: (fingerprint: string | undefined) => void
     readonly onDropOnTile: (peer: PeerRow, event: DragEvent<HTMLElement>) => void
+    readonly onScan: () => void
   },
 ): ReactNode {
   const now = Date.now()
+  const scanning = busyAction === 'scan'
   return (
-    <section className="dls-section">
+    <section className="dls-section" data-dragging={dragging ? 'true' : 'false'}>
       <div className="dls-sectionHead">
         <span className="dls-sectionTitle">
           {t('nearby')}
           {peers.length > 0 ? <span className="dls-count">{peers.length}</span> : null}
         </span>
-        {peers.length > 0 ? <span className="dls-note">{t('dropHint')}</span> : null}
+        <span className="dls-rowActions">
+          <span className="dls-note">{peers.length > 0 ? t('dropHint') : null}</span>
+          <button
+            type="button"
+            className="dls-action"
+            data-tone="quiet"
+            disabled={scanning}
+            onClick={onScan}
+          >
+            <SearchIcon size={13} />
+            {scanning ? t('scanning') : t('rescan')}
+          </button>
+        </span>
       </div>
 
       {peers.length === 0
@@ -689,12 +806,15 @@ function Nearby(
           <div className="dls-empty">
             <div className="dls-emptyTitle">{t('noPeers')}</div>
             <p className="dls-emptyHint">{t('noPeersHint')}</p>
+            <button type="button" className="dls-action" data-tone="primary" disabled={scanning} onClick={onScan}>
+              {t('rescan')}
+            </button>
           </div>
         )
         : (
           <div className="dls-peers">
             {peers.map((peer) => {
-              const age = formatAge(peer.lastSeen, now)
+              const age = ageOf(peer.lastSeen, now)
               const sending = busyAction === `send:${peer.fingerprint}`
               return (
                 <button
@@ -714,7 +834,11 @@ function Nearby(
                   onDrop={(event) => { onDropOnTile(peer, event) }}
                 >
                   <span className="dls-tileMark">
-                    <DeviceIcon type={peer.deviceType} size={18} />
+                    <DeviceIcon type={peer.deviceType} size={20} />
+                    {/* The dot is the device's own liveness, which is a different
+                        fact from whether this row can be sent to: a device can be
+                        discovered and still not answer. */}
+                    <span className="dls-tileDot" data-ok={peer.reachable ? 'true' : 'false'} aria-hidden />
                   </span>
                   <span className="dls-tileBody">
                     <span
@@ -728,7 +852,7 @@ function Nearby(
                         ? t('sendingTo', { alias: peer.alias })
                         : peer.reachable
                           ? `${deviceTypeLabel(t, peer.deviceType)} · ${peer.address}`
-                          : `${t('unreachable')}${age === undefined ? '' : ` · ${age}`}`}
+                          : `${t('unreachable')}${age === undefined ? '' : ` · ${t(age.key, age.params)}`}`}
                     </span>
                   </span>
                 </button>
@@ -736,10 +860,6 @@ function Nearby(
             })}
           </div>
         )}
-
-      {dragging && peers.some(peer => peer.reachable) ? (
-        <p className="dls-note">{t('dropHint')}</p>
-      ) : null}
     </section>
   )
 }
@@ -965,29 +1085,50 @@ function PathsSender(
   )
 }
 
-/** Every transfer this session has seen. */
+/**
+ * The transfer list, as one of its two readings.
+ *
+ * The panel draws this twice rather than once because the two halves answer
+ * different questions and belong in different places: **live** rows are what is
+ * happening now and sit above everything else, and **history** is a record and
+ * sits at the bottom. One list in the middle of the panel made the reader do that
+ * sorting themselves, and made a transfer that finishes jump the queue.
+ */
 function Transfers(
-  { transfers, busyAction, t, now, onAddToConversation, onReveal, onStop, onRetry }: {
+  { variant, transfers, busyAction, t, now, onAddToConversation, onSendToSession, onReveal, onStop, onRetry }: {
+    readonly variant: 'live' | 'history'
     readonly transfers: readonly TransferRow[]
     readonly busyAction: string | undefined
     readonly t: Translate
     readonly now: number
     readonly onAddToConversation: (path: string) => void
+    readonly onSendToSession: (paths: readonly string[]) => void
     readonly onReveal: (path: string) => void
     readonly onStop: (transferId: string) => void
     readonly onRetry: (transferId: string) => void
   },
 ): ReactNode {
+  const rows = variant === 'live'
+    ? transfers.filter(transfer => transfer.status === 'transferring')
+    : transfers.filter(transfer => transfer.status !== 'transferring')
+
+  // Nothing moving means no live section at all: a heading over an empty box
+  // would be a permanent piece of furniture reporting that nothing is happening.
+  if (variant === 'live' && rows.length === 0) return null
+
   return (
-    <section className="dls-section">
+    <section className="dls-section" data-variant={variant}>
       <div className="dls-sectionHead">
         <span className="dls-sectionTitle">
-          {t('transfers')}
-          {transfers.length > 0 ? <span className="dls-count">{transfers.length}</span> : null}
+          {variant === 'live' ? t('liveTitle') : t('transfers')}
+          {rows.length > 0 ? <span className="dls-count">{rows.length}</span> : null}
         </span>
+        {variant === 'history' && rows.length > 0
+          ? <span className="dls-note">{t('transfersHint')}</span>
+          : null}
       </div>
 
-      {transfers.length === 0
+      {rows.length === 0
         ? (
           <div className="dls-empty">
             <div className="dls-emptyTitle">{t('noTransfers')}</div>
@@ -996,7 +1137,7 @@ function Transfers(
         )
         : (
           <div className="dls-rows">
-            {transfers.map(transfer => (
+            {rows.map(transfer => (
               <TransferLine
                 key={transfer.id}
                 transfer={transfer}
@@ -1004,6 +1145,7 @@ function Transfers(
                 t={t}
                 now={now}
                 onAddToConversation={onAddToConversation}
+                onSendToSession={onSendToSession}
                 onReveal={onReveal}
                 onStop={onStop}
                 onRetry={onRetry}
@@ -1029,12 +1171,13 @@ function Transfers(
  * asks: which file (or how many), how it went, how much, and when.
  */
 function TransferLine(
-  { transfer, busyAction, t, now, onAddToConversation, onReveal, onStop, onRetry }: {
+  { transfer, busyAction, t, now, onAddToConversation, onSendToSession, onReveal, onStop, onRetry }: {
     readonly transfer: TransferRow
     readonly busyAction: string | undefined
     readonly t: Translate
     readonly now: number
     readonly onAddToConversation: (path: string) => void
+    readonly onSendToSession: (paths: readonly string[]) => void
     readonly onReveal: (path: string) => void
     readonly onStop: (transferId: string) => void
     readonly onRetry: (transferId: string) => void
@@ -1074,15 +1217,25 @@ function TransferLine(
     }
 
     // The figure: bytes against the total while moving, the total once it is over.
+    // A moving row also carries its speed and the estimate that speed implies,
+    // which are the two things a person watching a large file actually wants and
+    // the two a poll a second apart can afford to compute.
     if (transfer.bytesTotal > 0) {
-      parts.push(transfer.status === 'transferring'
-        ? `${formatBytes(transfer.bytesDone)} / ${formatBytes(transfer.bytesTotal)} · ${String(percent)}%`
-        : formatBytes(transfer.bytesTotal))
+      if (transfer.status === 'transferring') {
+        const elapsed = Math.max(1, now - transfer.createdAt)
+        parts.push(`${formatBytes(transfer.bytesDone)} / ${formatBytes(transfer.bytesTotal)} · ${String(percent)}%`)
+        const rate = formatRate(transfer.bytesDone, elapsed)
+        if (rate !== undefined) parts.push(rate)
+        const eta = etaOf(transfer.bytesTotal - transfer.bytesDone, transfer.bytesDone / (elapsed / 1000))
+        if (eta !== undefined) parts.push(t(eta.key, eta.params))
+      } else {
+        parts.push(formatBytes(transfer.bytesTotal))
+      }
     }
 
     if (settled) {
-      const age = formatAge(transfer.updatedAt, now)
-      if (age !== undefined) parts.push(age)
+      const age = ageOf(transfer.updatedAt, now)
+      if (age !== undefined) parts.push(t(age.key, age.params))
     }
     return parts.join(' · ')
   }, [transfer, single, settled, percent, now, t])
@@ -1109,7 +1262,7 @@ function TransferLine(
           <span className="dls-rowPeer">
             {incoming ? t('directionIn') : t('directionOut')} {transfer.peerAlias}
           </span>
-          <span className="dls-rowStatus">{statusLabel(t, transfer)}</span>
+          <span className="dls-rowStatus" data-status={transfer.status}>{statusLabel(t, transfer)}</span>
         </div>
         <div className="dls-rowMeta">{meta}</div>
         {open ? (
@@ -1168,15 +1321,30 @@ function TransferLine(
           : null}
 
         {/* The panel's whole reason for existing: a received file the
-            conversation can then read. Offered directly on a single-file row,
-            and through the file list on a batch, so twenty files do not put
-            twenty buttons on one line. */}
+            conversation can then read. Two ways to hand it over, because they
+            are different intents — send it into a conversation the user picks
+            (including one in another project), or park the reference in the
+            draft that is already open. The picker is the headline action. */}
         {done && incoming && saved.length > 0
           ? (
             <button
               type="button"
               className="dls-action"
               data-tone="primary"
+              disabled={busy}
+              onClick={() => { onSendToSession(saved.map(file => file.savedPath as string)) }}
+            >
+              {t('sendToSession')}
+            </button>
+          )
+          : null}
+
+        {done && incoming && saved.length > 0
+          ? (
+            <button
+              type="button"
+              className="dls-action"
+              data-tone="quiet"
               disabled={busy}
               title={t('addToConversationHint')}
               onClick={() => {

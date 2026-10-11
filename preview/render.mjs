@@ -52,8 +52,21 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
  * `dls-panel` alone would find the CSS and call a blank page a success.
  */
 const SHOTS = [
-  { scene: 'busy', theme: 'light', name: 'panel-light', expect: ['class="[^"]*dls-panel', '停止'] },
-  { scene: 'busy', theme: 'dark', name: 'panel-dark', expect: ['class="[^"]*dls-panel'] },
+  {
+    scene: 'busy',
+    theme: 'light',
+    name: 'panel-light',
+    // The identity card, the live section's own heading, the status pill on the
+    // moving row, and the stop button that row carries.
+    expect: [
+      'class="[^"]*dls-panel',
+      'class="[^"]*dls-ident',
+      'dls-sectionTitle',
+      'data-status="transferring"',
+      '停止',
+    ],
+  },
+  { scene: 'busy', theme: 'dark', name: 'panel-dark', expect: ['class="[^"]*dls-panel', 'dls-ident'] },
   { scene: 'empty', theme: 'light', name: 'empty-light', expect: ['class="[^"]*dls-panel', 'dls-emptyTitle'] },
   {
     scene: 'incoming',
@@ -72,7 +85,6 @@ const SHOTS = [
     theme: 'light',
     name: 'fish-light',
     expect: [
-      'class="[^"]*dls-buddy',
       'data-fish-mood="offered"',
       'data-fish-mood="moving"',
       'data-fish-mood="landed"',
@@ -80,15 +92,37 @@ const SHOTS = [
       'dlsFishRing',
     ],
   },
-  // The banner alone: it is the strip that sits between the reader and what they
-  // were about to send, so it is worth seeing on its own rather than inferring
-  // it from the composer's surroundings.
+  // The floating companion alone, in its two states worth looking at: bytes
+  // moving (rail, percentage, stop) and a question waiting on a person (the two
+  // answers are the reason it can be answered from anywhere).
   {
-    only: 'banner',
-    scene: 'incoming',
+    only: 'buddy',
+    scene: 'busy',
     theme: 'light',
-    name: 'banner-light',
-    expect: ['class="[^"]*dls-banner', '接收', '拒绝'],
+    name: 'buddy-moving',
+    expect: ['class="[^"]*dls-petCard', 'dls-petBarFill', '正在传输', '停止'],
+  },
+  {
+    only: 'buddy',
+    scene: 'incoming',
+    theme: 'dark',
+    name: 'buddy-offer',
+    expect: ['class="[^"]*dls-petCard', 'data-tone="attention"', '接收', '拒绝'],
+  },
+  // The conversation picker: projects as headings, sessions under them, and the
+  // two marks that say which session is open and which one is running.
+  {
+    only: 'picker',
+    scene: 'busy',
+    theme: 'light',
+    name: 'picker-light',
+    expect: [
+      'class="[^"]*dls-pickDialog',
+      'class="[^"]*dls-pickProjectName',
+      'class="[^"]*dls-pickSession',
+      '重构上传队列',
+      'dls-pickBadge',
+    ],
   },
   {
     scene: 'incoming',
@@ -110,7 +144,7 @@ const SHOTS = [
     scene: 'received',
     theme: 'light',
     name: 'received-light',
-    expect: ['class="[^"]*dls-panel', 'dls-row', '重试', '加入会话'],
+    expect: ['class="[^"]*dls-panel', 'dls-row', '重试', '发送到会话', '加入会话'],
   },
   { scene: 'blocked', theme: 'dark', name: 'blocked-dark', expect: ['class="[^"]*dls-panel', 'dls-note'] },
 ]

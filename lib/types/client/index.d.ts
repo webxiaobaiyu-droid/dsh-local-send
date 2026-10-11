@@ -2,17 +2,20 @@
  * Nearby transfer, browser half: where the plugin draws, and the actions every
  * one of those places asks for.
  *
- * Six seats, each doing one job:
+ * Five seats, each doing one job:
  *
  * - the **sidebar entry** and the **panel** it opens — who is around, what is
  *   moving, and what arrived;
  * - the **notification** in the frame-wide overlay — an offer has to reach
  *   somebody who is not looking at the panel;
+ * - the **floating companion** in the same overlay — the transfer's presence and
+ *   its progress, wherever in the window the user happens to be. Two surfaces that
+ *   used to carry this are gone deliberately: the banner above the composer sat in
+ *   the typing path, which is the one strip of the window the product keeps quiet,
+ *   and the mark in the conversation header could only be seen in the conversation
+ *   it belonged to;
  * - the **context menu** in the same overlay — right-click a file anywhere DSH
  *   shows one and send it, without visiting the panel at all;
- * - the **companion** in the conversation header and the **banner** above its
- *   composer — the transfer's presence while the user is working, which is where
- *   they are when a file arrives;
  * - the **composer hook**, which is the only thing that can put a reference into
  *   the draft.
  *

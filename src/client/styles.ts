@@ -85,31 +85,74 @@ export const styles = String.raw`
   color: var(--dsw-alias-label-tertiary);
 }
 
-/* The identity strip: where this device can be reached, and how to change the
- * name it announces. Laid out as a row of labelled facts rather than a card,
- * because there are three of them and a card would be mostly padding. */
-.dls-identity {
+/* The identity card: who this device is, whether anything can arrive here, where
+ * it is reachable, and where files land — with renaming attached to the name it
+ * changes rather than to a settings row somewhere else. A card rather than a
+ * labelled section, because all four facts are about one thing and the heading
+ * above the panel already said what that thing is. */
+.dls-ident {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-lg, 12px);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.dls-identBody {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-inline-size: 0;
+}
+
+.dls-identName {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* The one dot in this panel that is not about a transfer: whether this device can
+ * be reached at all. The halo is what makes it readable as a state rather than as
+ * a stray pixel at 7px across. */
+.dls-stateDot {
+  flex-shrink: 0;
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-warn-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-state-warn-primary) 18%, transparent);
+}
+
+.dls-stateDot[data-ok='true'] {
+  background: var(--dsw-alias-state-success-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-state-success-primary) 18%, transparent);
+}
+
+.dls-identMeta {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px 22px;
-  align-items: baseline;
-  margin-block-start: 12px;
-}
-
-.dls-fact {
-  display: flex;
-  gap: 7px;
+  gap: 6px;
   align-items: baseline;
   min-inline-size: 0;
-  font-size: 12.5px;
-}
-
-.dls-factKey {
-  flex-shrink: 0;
   color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
 }
 
-.dls-factValue {
+.dls-identMeta [data-tone='ok'] {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.dls-identMeta [data-tone='warn'] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dls-identFact {
   min-inline-size: 0;
   overflow: hidden;
   color: var(--dsw-alias-label-secondary);
@@ -118,25 +161,15 @@ export const styles = String.raw`
   white-space: nowrap;
 }
 
-/* A dot whose only job is to say whether this device can be reached at all. */
-.dls-state {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  font-size: 12.5px;
+.dls-identSep {
   color: var(--dsw-alias-label-tertiary);
 }
 
-.dls-state::before {
-  content: '';
-  inline-size: 6px;
-  block-size: 6px;
-  border-radius: 50%;
-  background: var(--dsw-alias-state-warn-primary);
-}
-
-.dls-state[data-ok='true']::before {
-  background: var(--dsw-alias-state-success-primary);
+.dls-identRename {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  align-items: center;
 }
 
 /* --------------------------------------------------------------- section -- */
@@ -149,23 +182,41 @@ export const styles = String.raw`
 
 .dls-sectionHead {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
-  justify-content: space-between;
-  min-block-size: 26px;
+  min-block-size: 24px;
 }
 
+/* The heading, then a hairline that runs out to the edge of the column. The rule
+ * is not decoration: this panel scrolls, and a heading has to stay separable from
+ * whatever scrolled up above it. */
 .dls-sectionTitle {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  align-items: center;
   margin: 0;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--dsw-alias-label-secondary);
 }
 
+.dls-sectionTitle::after {
+  content: '';
+  flex: 1;
+  block-size: 1px;
+  background: var(--dsw-alias-border-l2);
+}
+
+/* A count is a figure, so it is set apart from the sentence as one. */
 .dls-count {
-  margin-inline-start: 7px;
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-tertiary);
-  font-weight: 400;
+  font-size: 11px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -183,7 +234,7 @@ export const styles = String.raw`
   display: flex;
   gap: 11px;
   align-items: center;
-  padding: 12px 13px;
+  padding: 13px 14px;
   border: 0.5px solid var(--dsw-alias-border-l2);
   border-radius: var(--dsw-radius-lg, 12px);
   background: var(--dsw-alias-bg-layer-1);
@@ -220,14 +271,44 @@ export const styles = String.raw`
 }
 
 .dls-tileMark {
+  position: relative;
   display: grid;
   flex-shrink: 0;
   place-items: center;
-  inline-size: 34px;
-  block-size: 34px;
-  border-radius: 10px;
+  inline-size: 38px;
+  block-size: 38px;
+  border-radius: 11px;
   background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-secondary);
+}
+
+/* Whether the device is answering, drawn on the glyph it belongs to. A device can
+ * be discovered and still not answer, so this is a different fact from whether
+ * the tile is a usable drop target. */
+.dls-tileDot {
+  position: absolute;
+  inset-block-end: -2px;
+  inset-inline-end: -2px;
+  inline-size: 9px;
+  block-size: 9px;
+  border: 2px solid var(--dsw-alias-bg-layer-1);
+  border-radius: 50%;
+  background: var(--dsw-alias-state-warn-primary);
+}
+
+.dls-tileDot[data-ok='true'] {
+  background: var(--dsw-alias-state-success-primary);
+}
+
+/* With a file in hand, every tile that would take it says so at once: the drop
+ * targets are the answer to the only question a drag is asking. */
+.dls-section[data-dragging='true'] .dls-tile[data-reachable='true'] {
+  border-color: var(--dsw-alias-brand-primary);
+  border-style: dashed;
+}
+
+.dls-section[data-dragging='true'] .dls-tile[data-drop='true'] {
+  border-style: solid;
 }
 
 .dls-tileBody {
@@ -316,7 +397,7 @@ export const styles = String.raw`
 .dls-rows {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 /* The rail is this row's progress. '--dls-fill' is set by the component as a
@@ -414,18 +495,45 @@ export const styles = String.raw`
   white-space: nowrap;
 }
 
+/* The verdict as a pill rather than as grey text after the title: every row now
+ * carries one, which is what lets a reader scan the column for the ones that went
+ * wrong instead of reading each line to its end. */
 .dls-rowStatus {
   flex-shrink: 0;
-  font-size: 11.5px;
-  color: var(--dsw-alias-label-tertiary);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-weight: 500;
 }
 
-.dls-row[data-status='failed'] .dls-rowStatus {
+.dls-rowStatus[data-status='done'] {
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 14%, transparent);
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.dls-rowStatus[data-status='transferring'] {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent);
+  color: var(--dsw-alias-brand-text);
+}
+
+.dls-rowStatus[data-status='awaiting'] {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 16%, transparent);
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dls-rowStatus[data-status='failed'] {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 14%, transparent);
   color: var(--dsw-alias-state-error-primary);
 }
 
-.dls-row[data-status='done'] .dls-rowStatus {
-  color: var(--dsw-alias-state-success-primary);
+/* The live list is the only place a row gets a surface of its own. It is what is
+ * happening, it sits at the top of the panel, and the raised edge is what says
+ * "this one, not the record below it". */
+.dls-section[data-variant='live'] .dls-row {
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);
 }
 
 .dls-rowMeta {
@@ -613,6 +721,12 @@ export const styles = String.raw`
   line-height: 1.55;
 }
 
+/* An empty screen is an invitation to act, so the action that ends the emptiness
+ * belongs inside it rather than only in the section's own header. */
+.dls-empty > .dls-action {
+  margin-block-start: 12px;
+}
+
 /* A drag in progress dims everything that cannot receive it, so the tiles that
  * can stand out without any of them having to move. */
 .dls-panel[data-dragging='true'] .dls-tile[data-reachable='false'],
@@ -743,115 +857,191 @@ export const styles = String.raw`
   margin-inline-start: auto;
 }
 
-/* -------------------------------------------------------------- banner -- */
+/* ---------------------------------------------------- floating companion -- */
 
-/* The offer banner, directly above the composer. This is the one strip in the
- * window that sits between the reader and what they were about to send, so it
- * stays a single line: who, how much, and the answers. */
-.dls-banner {
+/* The companion is pinned to a corner of the window by default and to the user's
+ * own coordinates once they have moved it. The wrapper is the anchor and takes no
+ * pointer events, so a card sitting over a button can never eat the click; only
+ * the card itself is interactive. */
+.dls-pet {
+  position: fixed;
+  inset-block-end: 24px;
+  inset-inline-end: 24px;
+  z-index: 40;
+  pointer-events: none;
+}
+
+/* A placed card is positioned by its own coordinates, so the default corner must
+ * stop applying or the two would fight. */
+.dls-pet[data-placed='true'] {
+  inset-block-end: auto;
+  inset-inline-end: auto;
+}
+
+.dls-petCard {
+  position: relative;
   display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 9px 12px;
-  border: 0.5px solid var(--dsw-alias-state-warn-primary);
-  border-radius: var(--dsw-radius-lg, 12px);
-  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 9%, var(--dsw-alias-bg-layer-1));
+  flex-direction: column;
+  gap: 8px;
+  inline-size: max-content;
+  max-inline-size: 324px;
+  padding: 11px 12px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 16px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 14%);
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
-  font-size: 12.5px;
+  pointer-events: auto;
+  /* The drag is the gesture, so the browser must not claim it for scrolling. */
+  touch-action: none;
 }
 
-.dls-bannerMark {
-  display: grid;
-  flex-shrink: 0;
-  place-items: center;
-  color: var(--dsw-alias-state-warn-primary);
+/* The tone escalates the card's edge rather than its fill: a tinted card over the
+ * page would read as an alert, and two of these states are not alerts. */
+.dls-petCard[data-tone='attention'] {
+  border-color: var(--dsw-alias-state-warn-primary);
+  animation: dls-pet-ask 1.9s ease-in-out infinite;
 }
 
-.dls-bannerBody {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  align-items: baseline;
-  min-inline-size: 0;
+.dls-petCard[data-tone='busy'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, var(--dsw-alias-border-l2));
 }
 
-.dls-bannerTitle {
-  font-weight: 500;
+.dls-petCard[data-tone='good'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 55%, var(--dsw-alias-border-l2));
 }
 
-.dls-bannerMeta {
-  color: var(--dsw-alias-label-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
-.dls-bannerActions {
-  display: flex;
-  flex-shrink: 0;
-  gap: 8px;
-  margin-inline-start: auto;
-}
-
-/* ----------------------------------------------------------- companion -- */
-
-/* The fish in the conversation header. Idle it is deliberately quiet: a pet that
- * shouted while nothing was happening would be a notification with no news, and
- * the tone attribute is what escalates it. The size is fixed so the header's
- * other controls do not shift when the mood changes. */
-.dls-buddy {
-  display: grid;
-  place-items: center;
-  inline-size: 26px;
-  block-size: 26px;
-  padding: 0;
-  border: 0.5px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--dsw-alias-label-tertiary);
-  cursor: pointer;
-  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease;
-}
-
-.dls-buddy:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
-}
-
-.dls-buddy:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
-  outline-offset: 2px;
-}
-
-.dls-buddy[data-tone='busy'] {
-  color: var(--dsw-alias-brand-text);
-}
-
-.dls-buddy[data-tone='good'] {
-  color: var(--dsw-alias-state-success-primary);
-}
-
-.dls-buddy[data-tone='bad'] {
-  color: var(--dsw-alias-state-error-primary);
+.dls-petCard[data-tone='bad'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 55%, var(--dsw-alias-border-l2));
 }
 
 /* The one state that is waiting on a person gets a halo, because it is the only
  * state where the transfer cannot proceed without the reader. */
-.dls-buddy[data-tone='attention'] {
-  border-color: var(--dsw-alias-state-warn-primary);
-  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);
-  color: var(--dsw-alias-state-warn-primary);
-  animation: dls-buddy-ask 1.9s ease-in-out infinite;
-}
-
-@keyframes dls-buddy-ask {
+@keyframes dls-pet-ask {
   0%,
   100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--dsw-alias-state-warn-primary) 45%, transparent);
+    box-shadow: 0 10px 30px rgb(0 0 0 / 14%), 0 0 0 0 color-mix(in srgb, var(--dsw-alias-state-warn-primary) 40%, transparent);
   }
 
   55% {
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--dsw-alias-state-warn-primary) 0%, transparent);
+    box-shadow: 0 10px 30px rgb(0 0 0 / 14%), 0 0 0 6px color-mix(in srgb, var(--dsw-alias-state-warn-primary) 0%, transparent);
   }
+}
+
+/* The whole head is the drag handle and the way to the panel, which is why it is
+ * one button: pressing the fish to open the panel and dragging the fish to move it
+ * are the same gesture until they are not. */
+.dls-petHead {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 0 16px 0 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: grab;
+}
+
+.dls-petHead:active {
+  cursor: grabbing;
+}
+
+.dls-petMark {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dls-petCard[data-tone='attention'] .dls-petMark {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dls-petCard[data-tone='busy'] .dls-petMark {
+  color: var(--dsw-alias-brand-text);
+}
+
+.dls-petCard[data-tone='good'] .dls-petMark {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.dls-petCard[data-tone='bad'] .dls-petMark {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.dls-petText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.dls-petTitle {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.dls-petMeta {
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dls-petBar {
+  overflow: hidden;
+  block-size: 3px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.dls-petBarFill {
+  display: block;
+  block-size: 100%;
+  border-radius: inherit;
+  background: var(--dsw-alias-brand-primary);
+  transition: inline-size 400ms linear;
+}
+
+.dls-petActions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* Discoverable by hover and by focus, never permanently on screen: putting the
+ * fish away is not the common case, and a third button in the corner would make
+ * the card look like a dialog. */
+.dls-petHide {
+  position: absolute;
+  inset-block-start: 5px;
+  inset-inline-end: 5px;
+  display: grid;
+  place-items: center;
+  inline-size: 20px;
+  block-size: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 140ms ease, color 140ms ease;
+}
+
+.dls-petCard:hover .dls-petHide,
+.dls-petHide:focus-visible {
+  opacity: 1;
+}
+
+.dls-petHide:hover {
+  color: var(--dsw-alias-label-primary);
 }
 
 /* The tail is the only part of the fish that moves on its own, which is what
@@ -865,7 +1055,7 @@ export const styles = String.raw`
 
 /* Faster while bytes are moving: the pace is the progress the ring is also
  * drawing, said in a second way that needs no reading. */
-.dls-buddy[data-mood='moving'] .dlsFishTail {
+.dls-petCard[data-mood='moving'] .dlsFishTail {
   animation-duration: 0.7s;
 }
 
@@ -924,11 +1114,126 @@ export const styles = String.raw`
 
 /* The menu's material is the product's; only the width is ours, so a long device
  * name wraps rather than stretching the menu across the window. */
-.dls-menu,
-.dls-buddyMenu {
+.dls-menu {
   min-inline-size: 184px;
   max-inline-size: 320px;
   font-family: var(--dsw-font-family);
+}
+
+/* ------------------------------------------------------------- picker -- */
+
+/* Sending a received file into a conversation: projects as headings, their
+ * sessions under them, one press to send. The grouping is the two-step flow the
+ * brief asked for with the second step already visible, because a project list
+ * that replaced itself with a session list would hide the thing just chosen. */
+.dls-pickDialog {
+  inline-size: min(560px, 92vw);
+}
+
+.dls-pickContent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-block-size: 0;
+}
+
+.dls-pickSearch {
+  inline-size: 100%;
+}
+
+.dls-pickList {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-block-size: 52vh;
+  overflow: auto;
+  padding-inline-end: 2px;
+}
+
+.dls-pickGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.dls-pickProject {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  min-inline-size: 0;
+  padding: 0 10px 4px;
+}
+
+.dls-pickProjectName {
+  flex-shrink: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dls-pickProjectPath {
+  flex: 1;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dls-pickSession {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  inline-size: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+/* The highlight is what the keyboard is pointing at, so it follows the pointer as
+ * well: two marks for one selection would disagree the moment a mouse moved. */
+.dls-pickSession[data-active='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dls-pickSession:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.dls-pickSessionName {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dls-pickRunning {
+  flex-shrink: 0;
+  color: var(--dsw-alias-state-success-primary);
+  font-size: 11px;
+}
+
+.dls-pickNote {
+  flex-shrink: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.dls-pickBadge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10.5px;
 }
 
 /* ------------------------------------------------------------ a11y/motion -- */
@@ -937,7 +1242,10 @@ export const styles = String.raw`
 .dls-tile:focus-visible,
 .dls-composerButton:focus-visible,
 .dls-input:focus-visible,
-.dls-textarea:focus-visible {
+.dls-textarea:focus-visible,
+.dls-petHead:focus-visible,
+.dls-petHide:focus-visible,
+.dls-pickSession:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 2px;
 }
@@ -948,7 +1256,9 @@ export const styles = String.raw`
   .dls-row,
   .dls-row::after,
   .dls-composerButton,
-  .dls-buddy,
+  .dls-petCard,
+  .dls-petBarFill,
+  .dls-petHide,
   .dlsFishRing {
     transition: none;
   }
@@ -964,7 +1274,7 @@ export const styles = String.raw`
   /* The companion keeps its posture and its ring — those carry information — and
    * gives up only the motion that carries none. A fish that stopped moving would
    * still say everything it says. */
-  .dls-buddy[data-tone='attention'],
+  .dls-petCard[data-tone='attention'],
   .dlsFishTail,
   .dlsFishBubbles {
     animation: none;

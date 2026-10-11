@@ -64,7 +64,6 @@ export const zh = {
   pathsInvalid: '这些路径不可用：{list}',
 
   // Incoming
-  incomingTitle: '有设备想发送文件',
   incomingFrom: '{alias} 想发送 {count} 个文件',
   // Naming the file rather than repeating the count: the summary already said
   // there is one, so the useful thing to add is which one.
@@ -75,6 +74,11 @@ export const zh = {
 
   // Transfers
   transfers: '传输记录',
+  // The live zone above the history. Splitting the two is the point: a row that
+  // is still moving is the one thing in the panel worth interrupting for.
+  liveTitle: '正在传输',
+  stagedTitle: '待发送的文件',
+  transfersHint: '本机收发过的文件都会留在这里；收件箱不会自动清理。',
   noTransfers: '还没有传输记录',
   noTransfersHint: '发送或接收文件后，记录会显示在这里。',
   directionIn: '来自',
@@ -141,7 +145,8 @@ export const zh = {
   menuSent: '已发送到 {alias}',
   menuSendFailed: '发送失败：{message}',
 
-  // The companion in the conversation header, and the banner above the composer.
+  // The floating companion. The header mark and the composer banner it replaced
+  // are gone; these are the two strings its own chrome needs.
   openPanel: '打开面板',
   buddyLabel: '隔空传文件',
   buddyOffered: '{count} 个文件等待确认',
@@ -150,7 +155,30 @@ export const zh = {
   buddyDone: '刚刚完成一次传输',
   buddyFailed: '有一次传输没有完成',
   buddyIdleHint: '附近没有设备，也没有进行中的传输',
-  buddyAdd: '加入会话',
+  buddyDragHint: '拖动可以挪动位置',
+  buddyHide: '暂时收起',
+
+  // Relative times. Built from the dictionary rather than from `Intl`, because a
+  // Chinese panel that said "5s ago" would be reading two languages at once.
+  ageNow: '刚刚',
+  ageSeconds: '{seconds} 秒前',
+  ageMinutes: '{minutes} 分钟前',
+  etaSeconds: '还剩 {seconds} 秒',
+  etaMinutes: '还剩 {minutes} 分钟',
+
+  // Sending a received file into a conversation the user picks.
+  sendToSession: '发送到会话',
+  sentToSession: '已发送到「{title}」',
+  pickTitle: '发送到会话',
+  pickDescription: '选一个项目，再选要发进去的会话',
+  pickSearchPlaceholder: '搜索项目或会话',
+  pickCurrent: '当前',
+  pickRunning: '进行中',
+  pickStale: '空会话',
+  pickEmpty: '还没有可以发送的会话',
+  pickEmptyHint: '先在左侧打开或新建一个会话，再回到这里发送。',
+  pickNoMatch: '没有匹配的项目或会话',
+  pickNoMatchHint: '换个关键词试试。',
 
   // Failure surfaces. The `detail` these carry is the operating system's own
   // message, deliberately left untranslated: it is what a search for the
@@ -208,7 +236,6 @@ export const en: Record<LocalSendLocaleKey, string> = {
   pathsEmpty: 'Enter at least one file path',
   pathsInvalid: 'These paths are unusable: {list}',
 
-  incomingTitle: 'A device wants to send you files',
   incomingFrom: '{alias} wants to send {count} files',
   incomingFromOne: '{alias} wants to send {name}',
   incomingTotal: '{size} in total',
@@ -216,6 +243,9 @@ export const en: Record<LocalSendLocaleKey, string> = {
   decline: 'Decline',
 
   transfers: 'Transfers',
+  liveTitle: 'Moving now',
+  stagedTitle: 'Files ready to send',
+  transfersHint: 'Everything this device has sent and received; the inbox is never cleared automatically.',
   noTransfers: 'No transfers yet',
   noTransfersHint: 'Files you send or receive will be listed here.',
   directionIn: 'From',
@@ -279,7 +309,27 @@ export const en: Record<LocalSendLocaleKey, string> = {
   buddyDone: 'A transfer just finished',
   buddyFailed: 'A transfer did not finish',
   buddyIdleHint: 'No devices nearby and nothing in flight',
-  buddyAdd: 'Add to conversation',
+  buddyDragHint: 'Drag to move it',
+  buddyHide: 'Hide for now',
+
+  ageNow: 'just now',
+  ageSeconds: '{seconds}s ago',
+  ageMinutes: '{minutes}m ago',
+  etaSeconds: '{seconds}s left',
+  etaMinutes: '{minutes}m left',
+
+  sendToSession: 'Send to conversation',
+  sentToSession: 'Sent to "{title}"',
+  pickTitle: 'Send to conversation',
+  pickDescription: 'Pick a project, then the conversation to send it into',
+  pickSearchPlaceholder: 'Search projects or conversations',
+  pickCurrent: 'Open',
+  pickRunning: 'Running',
+  pickStale: 'Empty',
+  pickEmpty: 'No conversations to send to yet',
+  pickEmptyHint: 'Open or start a conversation in the sidebar, then come back.',
+  pickNoMatch: 'No matching project or conversation',
+  pickNoMatchHint: 'Try a different word.',
 
   'warning.portUnavailable': 'Cannot listen on port {port}, so files cannot arrive right now: {detail}',
   'warning.discoveryUnavailable': 'Device discovery is off, so other devices on this network cannot be seen: {detail}',

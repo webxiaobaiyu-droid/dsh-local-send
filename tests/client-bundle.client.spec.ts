@@ -226,13 +226,15 @@ describe('browser half bundle', () => {
     // The panel and the way to it.
     expect(names).toContain('main')
     expect(names).toContain('sidebar.panellist')
-    // The two overlay cells: the notification, and the right-click menu.
-    expect(names.filter(name => name === 'shell.overlay')).toHaveLength(2)
-    // Where the user arrives at a file: the composer hook, the companion above
-    // it, and the banner over it.
+    // Three overlay cells: the notification, the right-click menu, and the
+    // floating companion that carries progress wherever the user is.
+    expect(names.filter(name => name === 'shell.overlay')).toHaveLength(3)
+    // The one seat left inside a conversation: the composer hook. The banner
+    // above the composer and the mark in the header were both removed on purpose
+    // — see the note in the bundle's module docblock.
     expect(names).toContain('conversation.input.left')
-    expect(names).toContain('conversation.session.header.utilities')
-    expect(names).toContain('conversation.input.dock')
+    expect(names).not.toContain('conversation.input.dock')
+    expect(names).not.toContain('conversation.session.header.utilities')
   })
 
   it('gives the sidebar entry and the panel it opens the same id', () => {
@@ -246,16 +248,25 @@ describe('browser half bundle', () => {
     expect(sidebar?.options['id']).toBe('local-send')
   })
 
-  it('keeps the notification and the menu in separate overlay cells', () => {
+  it('keeps each overlay surface in its own cell', () => {
     const bundle = loadBundle()
     const activated = activate(bundle)
     const overlays = activated.registrations.filter(entry => entry.name === 'shell.overlay')
     const ids = overlays.map(entry => entry.options['id'])
     // A fresh id adds a cell beside the shipped ones; reusing one would replace
-    // somebody else's surface. Two ids rather than one, because the notification
-    // and the pointer-anchored menu answer different questions and neither can
-    // be the other's fallback.
-    expect(ids).toEqual(['local-send.notice', 'local-send.context-menu'])
+    // somebody else's surface. Three ids rather than one, because the three
+    // answer different questions — a question addressed to the user, a pointer
+    // anchored menu, and a mark the user can drag out of the way — and none can
+    // be another's fallback.
+    //
+    // Sorted because this array is the order the registrations were made in,
+    // while a cell's place on screen is its `order` option; asserting the
+    // sequence would pin the first and mean to pin the second.
+    expect([...ids].sort()).toEqual([
+      'local-send.buddy',
+      'local-send.context-menu',
+      'local-send.notice',
+    ])
   })
 
   it('declares the dictionary namespace on every localized registration', () => {

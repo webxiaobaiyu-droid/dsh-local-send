@@ -28,6 +28,7 @@ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-cli
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client';
 import { type PathCandidate, type SendPathsResponse } from '../types.ts';
 import { type TransferStore } from './state.ts';
+import type { TargetTree } from './session-target.ts';
 /** Registration-side face the panel reads and acts through. */
 export interface LocalSendPanelInjected {
     /** Key this panel occupies in the main column, matching the sidebar entry. */
@@ -77,6 +78,21 @@ export interface LocalSendPanelInjected {
     addToConversation: (path: string) => void;
     /** Whether a conversation is open for a reference to land in. */
     hasSession: () => boolean;
+    /**
+     * Every project and conversation a received file could be sent to.
+     *
+     * Read on demand rather than held in state: the picker is opened by a press and
+     * the answer is wanted then, and a snapshot taken at mount could name a session
+     * the user has since deleted.
+     */
+    readTargets: () => TargetTree;
+    /**
+     * Deliver a message carrying those files into one conversation, by id.
+     *
+     * Addressed by id rather than to "the open conversation" on purpose: the whole
+     * point of the picker is that the target need not be the one on screen.
+     */
+    sendToSession: (sessionId: string, paths: readonly string[]) => Promise<void>;
 }
 /** Full component props assembled by the main slot renderer. */
 export type LocalSendPanelProps = PropsRuntime<'main'> & PropsLocale<'localSend'> & InjectFace<LocalSendPanelInjected>;

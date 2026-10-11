@@ -36,30 +36,49 @@ export declare function formatBytes(bytes: number): string;
  */
 export declare function formatRate(bytes: number, elapsedMs: number): string | undefined;
 /**
- * How long ago something happened.
+ * How long ago something happened, as a dictionary entry and its figures.
  *
  * Coarse on purpose: a peer list ticks, and a figure that changes every second
  * draws the eye to the least important column. Past a minute the answer is a
  * count of minutes, and past an hour it is not worth showing at all.
  *
+ * Returned as a key rather than as a sentence, because this module formats
+ * *numbers* and the dictionary formats *words* — a `"5s ago"` built here would
+ * be an English fragment sitting in a Chinese panel, which is exactly what the
+ * first version shipped and this signature exists to prevent.
+ *
  * @param timestamp - epoch milliseconds.
  * @param now - the current time, injected so the result is testable.
- * @returns a string like `just now` or `4m ago`, or `undefined` beyond an hour.
+ * @returns the key and placeholders, or `undefined` beyond an hour.
  */
-export declare function formatAge(timestamp: number, now: number): string | undefined;
+export declare function ageOf(timestamp: number, now: number): AgeReading | undefined;
+/** One coarse "how long ago" reading, ready to hand to the dictionary. */
+export interface AgeReading {
+    /** Which unit the figure is in. */
+    readonly key: 'ageNow' | 'ageSeconds' | 'ageMinutes';
+    /** Placeholders that key expects. */
+    readonly params: Readonly<Record<string, number>>;
+}
 /**
- * A remaining-time estimate.
+ * A remaining-time estimate, as a dictionary entry and its figures.
  *
  * Clamped and rounded because an estimate is a comfort, not a measurement: a
- * figure that reads "3s" then "1m 40s" is worse than one that counts down
- * smoothly, and the clamp is what stops a transient stall from flashing a
- * number in the hours.
+ * figure that reads "3" then "100" is worse than one that counts down smoothly,
+ * and the clamp is what stops a transient stall from flashing a number in the
+ * hours. Like {@link ageOf}, the unit word belongs to the dictionary.
  *
  * @param remaining - bytes still to move.
  * @param bytesPerSecond - the current rate.
- * @returns a string like `12s` or `2m`, or `undefined` when no rate is known.
+ * @returns the key and placeholders, or `undefined` when no rate is known.
  */
-export declare function formatEta(remaining: number, bytesPerSecond: number): string | undefined;
+export declare function etaOf(remaining: number, bytesPerSecond: number): EtaReading | undefined;
+/** How much longer a transfer has, ready to hand to the dictionary. */
+export interface EtaReading {
+    /** Which unit the figure is in. */
+    readonly key: 'etaSeconds' | 'etaMinutes';
+    /** Placeholders that key expects. */
+    readonly params: Readonly<Record<string, number>>;
+}
 /**
  * A whole-transfer completion percentage.
  * @param done - bytes moved.

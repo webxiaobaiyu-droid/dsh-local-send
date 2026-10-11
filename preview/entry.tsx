@@ -20,8 +20,10 @@ import type { ReactNode } from 'react'
 import { LocalSendPanel } from '../src/client/LocalSendPanel.tsx'
 import { NoticeToast } from '../src/client/NoticeToast.tsx'
 import type { NoticeToastProps } from '../src/client/NoticeToast.tsx'
-import { TransferBanner } from '../src/client/TransferBanner.tsx'
-import type { TransferBannerProps } from '../src/client/TransferBanner.tsx'
+import { FloatingBuddy } from '../src/client/FloatingBuddy.tsx'
+import type { FloatingBuddyProps } from '../src/client/FloatingBuddy.tsx'
+import { SessionPicker } from '../src/client/SessionPicker.tsx'
+import { targetTree } from '../src/client/session-target.ts'
 import { FishMark, type FishMood } from '../src/client/fish.tsx'
 import type { LocalSendPanelInjected, LocalSendPanelProps } from '../src/client/LocalSendPanel.tsx'
 import { zh } from '../src/client/locales.ts'
@@ -315,13 +317,65 @@ function toastFace(state: LocalSendState) {
   }
 }
 
-/** The banner's injected face, with every action inert. */
-function bannerFace(state: LocalSendState) {
+/** The floating companion's injected face, with every action inert. */
+function buddyFace(state: LocalSendState) {
   return {
     store: fixedStore(state),
     answer: async () => {},
+    cancel: async () => {},
     openPanel: () => {},
   }
+}
+
+/**
+ * Two projects with a few conversations each, for the picker's fixture.
+ *
+ * Deliberately shaped like a real tree: a subagent session and a never-used one
+ * that the model must drop, and the current session in the second project so the
+ * ordering rule is visible rather than assumed.
+ */
+function sampleTargets() {
+  return targetTree({
+    projects: [
+      {
+        workspaceId: 'w1',
+        path: '/Users/Admin/dsh-plugins/dsh-local-send',
+        title: 'dsh-local-send',
+        sessionIds: ['s1', 's2', 's3'],
+        updatedAt: '2026-10-09T09:00:00.000Z',
+      },
+      {
+        workspaceId: 'w2',
+        path: '/Users/Admin/work/atlas',
+        title: 'atlas',
+        sessionIds: ['s4', 's5'],
+        updatedAt: '2026-10-10T11:00:00.000Z',
+      },
+    ],
+    sessions: {
+      s1: {
+        id: 's1', displayTitle: '协议解析的边界', running: false, blank: false,
+        updatedAt: NOW - 40 * 60_000,
+      },
+      s2: {
+        id: 's2', displayTitle: '把截图挪进 docs', running: false, blank: false,
+        updatedAt: NOW - 5 * 60_000,
+      },
+      s3: {
+        id: 's3', displayTitle: '子代理：查 API', running: false, blank: false,
+        updatedAt: NOW - 60_000, origin: 'subagent',
+      },
+      s4: {
+        id: 's4', displayTitle: '重构上传队列', running: true, blank: false,
+        updatedAt: NOW - 90_000,
+      },
+      s5: {
+        id: 's5', displayTitle: '新建会话', running: false, blank: true,
+        updatedAt: NOW - 30_000,
+      },
+    },
+    currentSessionId: 's4',
+  })
 }
 
 /** The injected face, with every action inert. */
@@ -341,6 +395,8 @@ function face(state: LocalSendState): LocalSendPanelInjected {
     inspectPaths: async () => [],
     addToConversation: () => {},
     hasSession: () => true,
+    readTargets: () => sampleTargets(),
+    sendToSession: async () => {},
   }
 }
 
@@ -418,7 +474,7 @@ function FishBoard(): ReactNode {
             {board.map(entry => (
               <div key={entry.mood} className="dls-tile">
                 <span className="dls-tileMark">
-                  <span className="dls-buddy" data-tone={entry.tone} data-mood={entry.mood}>
+                  <span className="dls-petMark" data-tone={entry.tone} data-mood={entry.mood}>
                     <FishMark
                       size={18}
                       mood={entry.mood}
@@ -479,21 +535,22 @@ try {
 
   const props = { t: translate, ...face(state) } as unknown as LocalSendPanelProps
   const toastProps = { t: translate, ...toastFace(state) } as unknown as NoticeToastProps
-  const bannerProps = { t: translate, ...bannerFace(state) } as unknown as TransferBannerProps
+  const buddyProps = { t: translate, ...buddyFace(state) } as unknown as FloatingBuddyProps
 
   const root = document.getElementById('root')
   if (root === null) throw new Error('preview: no #root')
 
   /**
-   * `?only=toast` mounts the notification alone; `?only=banner` the banner; and
-   * `?only=fish` the companion's five postures side by side.
+   * `?only=toast` mounts the notification alone; `?only=buddy` the floating
+   * companion; `?only=picker` the conversation picker; and `?only=fish` the
+   * companion's five postures side by side.
    *
-   * The first two are kept because the surfaces fail independently and a blank
-   * page does not say which one did: with both mounted, a throw in either
-   * unmounts the tree and looks identical. The fish is here because it is the
-   * one drawing in this plugin that cannot be judged by an assertion — whether
-   * a small animal reads as that animal at 18 pixels is a question only an eye
-   * can answer, and this is the only place to put one.
+   * The overlays are kept apart because they fail independently and a blank page
+   * does not say which one did: with both mounted, a throw in either unmounts the
+   * tree and looks identical. The fish is here because it is the one drawing in
+   * this plugin that cannot be judged by an assertion — whether a small animal
+   * reads as that animal is a question only an eye can answer, and this is the
+   * only place to put one.
    */
   const only = params.get('only')
 
@@ -503,16 +560,27 @@ try {
   }).render(
     only === 'toast'
       ? <NoticeToast {...toastProps} />
-      : only === 'banner'
-        ? <TransferBanner {...bannerProps} />
-        : only === 'fish'
-          ? <FishBoard />
-          : (
-            <>
-              <LocalSendPanel {...props} />
-              {params.get('toast') === '1' ? <NoticeToast {...toastProps} /> : null}
-            </>
-          ),
+      : only === 'buddy'
+        ? <FloatingBuddy {...buddyProps} />
+        : only === 'picker'
+          ? (
+            <SessionPicker
+              open
+              busy={false}
+              tree={sampleTargets()}
+              t={translate}
+              onClose={() => {}}
+              onPick={() => {}}
+            />
+          )
+          : only === 'fish'
+            ? <FishBoard />
+            : (
+              <>
+                <LocalSendPanel {...props} />
+                {params.get('toast') === '1' ? <NoticeToast {...toastProps} /> : null}
+              </>
+            ),
   )
 } catch (error: unknown) {
   // Setup runs synchronously, so a failure here — a fixture that will not build,
