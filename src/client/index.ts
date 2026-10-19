@@ -247,11 +247,24 @@ function hasOpenSession(ctx: ClientContext): boolean {
  */
 function openInSession(ctx: ClientContext, sessionId: string, paths: readonly string[]): void {
   const workspace = ctx.get('uiWorkspace') as { openSession?: (id: string) => void } | undefined
-  workspace?.openSession?.(sessionId)
-  // `openSession` already leaves the panel in the shipped wiring; this is the
-  // plugin's own guarantee. A deployment whose workspace service is absent, or a
-  // call that is a no-op because that session is already current, must still get
-  // the user out of the transfer panel and in front of the composer.
+  if (workspace?.openSession !== undefined) {
+    try {
+      workspace.openSession(sessionId)
+    } catch {
+      // Checked below rather than reported here: a switch that failed and one
+      // that never happened are the same condition for the caller.
+    }
+  }
+  // The switch is what makes the insert land in the right conversation. If the
+  // target is not the current session when this returns, the reference would be
+  // taken by whichever composer is on screen — the conversation the user is
+  // leaving — so nothing is parked and the failure is said out loud instead.
+  if (currentSessionId(ctx) !== sessionId) {
+    flash('sessionSwitchFailed', { tone: 'error' })
+    return
+  }
+  // `openSession` already leaves the panel in the shipped wiring; this covers a
+  // switch that was a no-op because that session was already current.
   ctx.layout.selectPanel(null)
   requestReference(paths)
 }

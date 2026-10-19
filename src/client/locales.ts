@@ -171,6 +171,7 @@ export const zh = {
   // pressing it chooses a conversation rather than sending anything yet.
   sendToSession: '发送到会话…',
   openedInSession: '已切到「{title}」，引用已放进输入框',
+  sessionSwitchFailed: '无法切换到那个会话，请从左侧列表打开它再试',
   pickTitle: '发送到会话',
   pickDescription: '选一个项目，再选要发进去的会话',
   pickSearchPlaceholder: '搜索项目或会话',
@@ -322,6 +323,7 @@ export const en: Record<LocalSendLocaleKey, string> = {
 
   sendToSession: 'Send to conversation…',
   openedInSession: 'Opened "{title}" with the reference in the composer',
+  sessionSwitchFailed: 'Could not open that conversation — open it from the sidebar and try again',
   pickTitle: 'Send to conversation',
   pickDescription: 'Pick a project, then the conversation to send it into',
   pickSearchPlaceholder: 'Search projects or conversations',

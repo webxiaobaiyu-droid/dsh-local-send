@@ -127,6 +127,7 @@ export declare const zh: {
     readonly etaMinutes: "还剩 {minutes} 分钟";
     readonly sendToSession: "发送到会话…";
     readonly openedInSession: "已切到「{title}」，引用已放进输入框";
+    readonly sessionSwitchFailed: "无法切换到那个会话，请从左侧列表打开它再试";
     readonly pickTitle: "发送到会话";
     readonly pickDescription: "选一个项目，再选要发进去的会话";
     readonly pickSearchPlaceholder: "搜索项目或会话";
