@@ -396,7 +396,7 @@ function face(state: LocalSendState): LocalSendPanelInjected {
     addToConversation: () => {},
     hasSession: () => true,
     readTargets: () => sampleTargets(),
-    sendToSession: async () => {},
+    openInSession: () => {},
   }
 }
 

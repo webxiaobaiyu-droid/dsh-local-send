@@ -43,13 +43,13 @@ describe('the decision', () => {
     // The request is made from the transfer panel and carried out by the
     // composer, which only exists once the centre column has switched back. So
     // "no session yet" is the normal state for a moment, not a reason to give up.
-    expect(referenceAction(RECEIVED, false)).toEqual({ kind: 'wait' })
+    expect(referenceAction([RECEIVED], false)).toEqual({ kind: 'wait' })
   })
 
   it('inserts a mention with a trailing space', () => {
     // The space is load-bearing: the `@` grammar ends a token at whitespace, so
     // without it the next character typed would extend the path.
-    expect(referenceAction(RECEIVED, true)).toEqual({
+    expect(referenceAction([RECEIVED], true)).toEqual({
       kind: 'insert',
       text: `@${RECEIVED} `,
     })
@@ -57,9 +57,28 @@ describe('the decision', () => {
 
   it('quotes a path that contains whitespace', () => {
     const spaced = '/Users/Admin/.dsh/local-send/inbox/my photo.jpg'
-    expect(referenceAction(spaced, true)).toEqual({
+    expect(referenceAction([spaced], true)).toEqual({
       kind: 'insert',
       text: `@"${spaced}" `,
+    })
+  })
+
+  it('references a whole batch in one insert', () => {
+    // A received batch is usually several files, and one press has to carry all
+    // of them. The separator is a single space, and the trailing space is still
+    // the token terminator; an empty hint would extend the last path.
+    const second = '/Users/Admin/.dsh/local-send/inbox/IMG_0043.jpg'
+    expect(referenceAction([RECEIVED, second], true)).toEqual({
+      kind: 'insert',
+      text: `@${RECEIVED} @${second} `,
+    })
+  })
+
+  it('drops only the paths the grammar cannot represent', () => {
+    // One unrepresentable path in a batch costs that file, not the gesture.
+    expect(referenceAction([RECEIVED, '/tmp/a"b.jpg'], true)).toEqual({
+      kind: 'insert',
+      text: `@${RECEIVED} `,
     })
   })
 
@@ -67,8 +86,8 @@ describe('the decision', () => {
     // Carrying a quote or a control character, this would be inserted as a token
     // that parses as two and hands the agent half a path — worse than doing
     // nothing, because it looks like it worked.
-    expect(referenceAction('/tmp/a"b.jpg', true)).toEqual({ kind: 'drop' })
-    expect(referenceAction('/tmp/a\u0000b.jpg', true)).toEqual({ kind: 'drop' })
+    expect(referenceAction(['/tmp/a"b.jpg'], true)).toEqual({ kind: 'drop' })
+    expect(referenceAction(['/tmp/a\u0000b.jpg'], true)).toEqual({ kind: 'drop' })
   })
 
   it('agrees with the mention formatter it is built on', () => {
@@ -76,7 +95,7 @@ describe('the decision', () => {
     // would mean the decision and the text it produces could drift apart.
     for (const path of [RECEIVED, '/tmp/a b.jpg', '/tmp/a"b.jpg', '']) {
       const mention = formatMention(path)
-      const action = referenceAction(path, true)
+      const action = referenceAction([path], true)
       if (mention === undefined) expect(action.kind).toBe('drop')
       else expect(action).toEqual({ kind: 'insert', text: `${mention} ` })
     }
@@ -86,19 +105,19 @@ describe('the decision', () => {
 describe('the handoff between the panel and the composer', () => {
   it('carries a request from one to the other', () => {
     expect(readReference()).toBeUndefined()
-    requestReference(RECEIVED)
-    expect(readReference()).toBe(RECEIVED)
+    requestReference([RECEIVED])
+    expect(readReference()).toEqual([RECEIVED])
   })
 
   it('notifies subscribers, which is how the composer re-renders', () => {
     const seen = vi.fn()
     const stop = subscribeReference(seen)
-    requestReference(RECEIVED)
+    requestReference([RECEIVED])
     expect(seen).toHaveBeenCalledTimes(1)
     stop()
     // An unsubscribed listener must not be called: the composer unmounts when
     // the user leaves the conversation, and a stale listener would keep it alive.
-    requestReference('/tmp/other.jpg')
+    requestReference(['/tmp/other.jpg'])
     expect(seen).toHaveBeenCalledTimes(1)
   })
 
@@ -106,16 +125,16 @@ describe('the handoff between the panel and the composer', () => {
     // `useSyncExternalStore` may read more than once per render, and a snapshot
     // that vanished on the first read would make the composer render an empty
     // state on its second pass.
-    requestReference(RECEIVED)
-    expect(readReference()).toBe(RECEIVED)
-    expect(readReference()).toBe(RECEIVED)
+    requestReference([RECEIVED])
+    expect(readReference()).toEqual([RECEIVED])
+    expect(readReference()).toEqual([RECEIVED])
   })
 
   it('consumes exactly once', () => {
     // The insert takes the request before writing, so a failing edit cannot leave
     // it to re-fire on the next render and append the reference a second time.
-    requestReference(RECEIVED)
-    expect(consumeReference()).toBe(RECEIVED)
+    requestReference([RECEIVED])
+    expect(consumeReference()).toEqual([RECEIVED])
     expect(consumeReference()).toBeUndefined()
     expect(readReference()).toBeUndefined()
   })
@@ -124,9 +143,9 @@ describe('the handoff between the panel and the composer', () => {
     // Two impatient clicks mean "this file", and the second click is the one
     // that counts. Queueing them would append a reference the user did not ask
     // for.
-    requestReference('/tmp/first.jpg')
-    requestReference('/tmp/second.jpg')
-    expect(consumeReference()).toBe('/tmp/second.jpg')
+    requestReference(['/tmp/first.jpg'])
+    requestReference(['/tmp/second.jpg'])
+    expect(consumeReference()).toEqual(['/tmp/second.jpg'])
   })
 
   it('expires a request that nobody acted on', () => {
@@ -134,20 +153,20 @@ describe('the handoff between the panel and the composer', () => {
     // but a request left over from a conversation the user has since left must
     // not insert a path into an unrelated draft minutes later.
     vi.useFakeTimers()
-    requestReference(RECEIVED)
+    requestReference([RECEIVED])
     vi.advanceTimersByTime(14_000)
-    expect(readReference()).toBe(RECEIVED)
+    expect(readReference()).toEqual([RECEIVED])
     vi.advanceTimersByTime(2_000)
     expect(readReference()).toBeUndefined()
   })
 
   it('re-arms a fresh request after an expired one', () => {
     vi.useFakeTimers()
-    requestReference('/tmp/stale.jpg')
+    requestReference(['/tmp/stale.jpg'])
     vi.advanceTimersByTime(20_000)
     expect(readReference()).toBeUndefined()
-    requestReference('/tmp/fresh.jpg')
-    expect(readReference()).toBe('/tmp/fresh.jpg')
+    requestReference(['/tmp/fresh.jpg'])
+    expect(readReference()).toEqual(['/tmp/fresh.jpg'])
   })
 })
 

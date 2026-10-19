@@ -7,6 +7,10 @@
  * when no conversation is open puts a path into a draft the user never sees. A
  * pure function is testable; a `useEffect` body is not.
  *
+ * The text itself is built by `session-target.ts`'s `targetMessage`, the same
+ * function the "send to a conversation" picker uses: one press references every
+ * file in the batch, and both entry points have to spell that list the same way.
+ *
  * @module dsh-local-send/client/reference-action
  */
 /** What one look at the pending request concluded. */
@@ -25,10 +29,10 @@ export type ReferenceAction =
 /**
  * Take the request and forget it.
  *
- * The path cannot be written as a mention at all — it carries a quote or a
- * control character — so inserting it would produce a token that parses as two
- * and hands the agent half a path. Dropping it leaves the panel showing the
- * file and its location, which is the honest fallback.
+ * None of the paths can be written as a mention — each carries a quote or a
+ * control character — so inserting them would produce tokens that parse as two
+ * and hand the agent half a path. Dropping it leaves the panel showing the
+ * files and their location, which is the honest fallback.
  */
  | {
     readonly kind: 'drop';
@@ -41,8 +45,8 @@ export type ReferenceAction =
 /**
  * Decide what to do about one pending request.
  *
- * @param pending - the path waiting to be referenced, if any.
+ * @param pending - the paths waiting to be referenced, if any.
  * @param hasSession - whether a conversation is currently bound to the composer.
  * @returns the action to take.
  */
-export declare function referenceAction(pending: string | undefined, hasSession: boolean): ReferenceAction;
+export declare function referenceAction(pending: readonly string[] | undefined, hasSession: boolean): ReferenceAction;

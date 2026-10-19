@@ -57,12 +57,10 @@ import { FloatingBuddy, type FloatingBuddyInjected } from './FloatingBuddy.tsx'
 import { flash } from './flash.ts'
 import { LocalSendPanel, type LocalSendPanelInjected } from './LocalSendPanel.tsx'
 import { en, zh, type LocalSendLocaleKey } from './locales.ts'
-import { formatMention } from './mention.ts'
 import { HandoffIcon } from './icons.tsx'
 import { requestReference } from './pending.ts'
 import { NoticeToast, type NoticeToastInjected } from './NoticeToast.tsx'
 import {
-  targetMessage,
   targetTree,
   type ProjectRow,
   type SessionRow,
@@ -126,31 +124,6 @@ interface SessionList {
   readonly list: {
     getSnapshot(): { readonly byId: Readonly<Record<string, SessionSnapshotRow>> }
   }
-}
-
-/**
- * The session list, plus the two calls that address one session by id.
- *
- * Kept apart from {@link SessionList} because they are separate capabilities of
- * the same service: a deployment that lists sessions but cannot retain one still
- * gets a working panel, and only the send-into-a-conversation action is refused.
- */
-interface SessionAddressing extends SessionList {
-  retain(id: string, options: { readonly source: string }): SessionReference
-}
-
-/** What one retained session can be asked to do. */
-interface SessionPrompt {
-  prompt(
-    content: readonly { readonly type: 'text'; readonly text: string }[],
-    mode: 'queue' | 'steer',
-  ): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: { readonly message: string } }>
-}
-
-/** A held session, released when the caller is done with it. */
-interface SessionReference {
-  readonly ready: Promise<{ readonly sessionId: string; readonly session: SessionPrompt }>
-  release(): void
 }
 
 /** One project, as the workspace list publishes it. */
@@ -256,38 +229,31 @@ function hasOpenSession(ctx: ClientContext): boolean {
 }
 
 /**
- * Deliver a message carrying file references into one conversation.
+ * Open one conversation and leave the files' references in its composer.
  *
- * The session does not have to be the one on screen: the prompt is addressed by
- * id and goes straight to the host, which is what makes "send this to *that*
- * project" possible at all. It does have to be retained first — the service
- * refuses to address a session nothing is holding — and the hold is released as
- * soon as the message is accepted, because retaining a session pulls its history.
+ * Two steps, in this order: switch the centre column to that conversation, then
+ * park the request. Parking first would let whichever composer is mounted
+ * *right now* take it — the one belonging to the conversation the user is
+ * leaving — which is the one bug this ordering exists to prevent. The insert
+ * itself is performed by `ComposerEntry`, which only exists inside a
+ * conversation's slot tree.
+ *
+ * Nothing is sent: the user asked for the reference to land in the draft so they
+ * can say what they want said about it.
  *
  * @param ctx - client context.
- * @param sessionId - the conversation to send into.
+ * @param sessionId - the conversation to open.
  * @param paths - absolute paths of the received files.
- * @throws when the plugin cannot write those paths as references, or the host refuses the message.
  */
-async function sendToSession(
-  ctx: ClientContext,
-  sessionId: string,
-  paths: readonly string[],
-): Promise<void> {
-  const message = targetMessage(paths, formatMention)
-  if (message === undefined) throw new Error('those files cannot be referenced')
-  const sessions = ctx.get('sessions') as SessionAddressing | undefined
-  if (sessions === undefined || typeof sessions.retain !== 'function') {
-    throw new Error('this deployment has no session service')
-  }
-  const reference = sessions.retain(sessionId, { source: 'localSend' })
-  try {
-    const binding = await reference.ready
-    const result = await binding.session.prompt([{ type: 'text', text: message }], 'queue')
-    if (result.ok !== true) throw new Error(result.error.message)
-  } finally {
-    reference.release()
-  }
+function openInSession(ctx: ClientContext, sessionId: string, paths: readonly string[]): void {
+  const workspace = ctx.get('uiWorkspace') as { openSession?: (id: string) => void } | undefined
+  workspace?.openSession?.(sessionId)
+  // `openSession` already leaves the panel in the shipped wiring; this is the
+  // plugin's own guarantee. A deployment whose workspace service is absent, or a
+  // call that is a no-op because that session is already current, must still get
+  // the user out of the transfer panel and in front of the composer.
+  ctx.layout.selectPanel(null)
+  requestReference(paths)
 }
 
 /**
@@ -416,7 +382,7 @@ export function apply(ctx: ClientContext): void {
       flash('noSession', { tone: 'error' })
       return
     }
-    requestReference(path)
+    requestReference([path])
     ctx.layout.selectPanel(null)
     flash('addedToConversation')
   }
@@ -455,8 +421,8 @@ export function apply(ctx: ClientContext): void {
       sessions: sessionRowsOf(ctx),
       currentSessionId: currentSessionId(ctx),
     }),
-    sendToSession: async (sessionId: string, paths: readonly string[]): Promise<void> => {
-      await sendToSession(ctx, sessionId, paths)
+    openInSession: (sessionId: string, paths: readonly string[]): void => {
+      openInSession(ctx, sessionId, paths)
     },
     /** Bring the transfer panel forward, for a surface that is only a summary. */
     openPanel: (): void => { ctx.layout.selectPanel(PANEL_ID) },

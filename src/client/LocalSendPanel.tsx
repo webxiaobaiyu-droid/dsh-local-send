@@ -108,12 +108,14 @@ export interface LocalSendPanelInjected {
    */
   readTargets: () => TargetTree
   /**
-   * Deliver a message carrying those files into one conversation, by id.
+   * Open one conversation by id with those files referenced in its composer.
    *
    * Addressed by id rather than to "the open conversation" on purpose: the whole
-   * point of the picker is that the target need not be the one on screen.
+   * point of the picker is that the target need not be the one on screen. Nothing
+   * is sent — the reference lands in the draft, which is where the user says what
+   * they want said about it.
    */
-  sendToSession: (sessionId: string, paths: readonly string[]) => Promise<void>
+  openInSession: (sessionId: string, paths: readonly string[]) => void
 }
 
 /** Full component props assembled by the main slot renderer. */
@@ -146,7 +148,7 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
   const {
     t, store, sendFiles, sendLocalPaths, answer, cancel, retry,
     renameDevice, scanNow, revealFile, inspectPaths, addToConversation, hasSession,
-    readTargets, sendToSession,
+    readTargets, openInSession,
   } = props
   const read = useTransferState(store)
   const [dropTarget, setDropTarget] = useState<string | undefined>(undefined)
@@ -172,8 +174,6 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
    * the thing the message has to name.
    */
   const [pickFor, setPickFor] = useState<readonly string[] | undefined>(undefined)
-  /** Whether a send into a chosen conversation is in flight. */
-  const [sending, setSending] = useState(false)
   /** Nested drag depth; see the module note on why this is a counter. */
   const dragDepth = useRef(0)
   /** The hidden picker the "choose files" button drives. */
@@ -589,24 +589,17 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
 
       <SessionPicker
         open={pickFor !== undefined}
-        busy={sending}
+        busy={false}
         tree={pickFor === undefined ? { projects: [] } : readTargets()}
         t={t}
         onClose={() => { setPickFor(undefined) }}
         onPick={(sessionId, label) => {
+          // Posted before the switch: opening the conversation is what takes this
+          // panel away, so the notice has to be raised on the way out.
           const paths = pickFor ?? []
-          setSending(true)
-          void sendToSession(sessionId, paths).then(
-            () => {
-              setSending(false)
-              setPickFor(undefined)
-              setNotice({ text: t('sentToSession', { title: label }), tone: 'info' })
-            },
-            (error: unknown) => {
-              setSending(false)
-              setNotice({ text: t('errorGeneric', { message: describe(error) }), tone: 'error' })
-            },
-          )
+          setPickFor(undefined)
+          openInSession(sessionId, paths)
+          setNotice({ text: t('openedInSession', { title: label }), tone: 'info' })
         }}
       />
     </div>

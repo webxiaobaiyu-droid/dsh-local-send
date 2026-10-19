@@ -173,18 +173,19 @@ pnpm run preview
 
 ## 把文件发进任意一个会话
 
-「发送到会话」要能在**不是当前显示**的那个会话里落地，这是它和「加入会话」的全部区别。三条事实决定了它怎么写：
+「发送到会话」要把一个已收到的文件交给**不是当前显示**的那个会话，这是它和「加入会话」的全部区别。做法是三步：切会话、离开面板、把请求留给那个会话的 composer。
 
 **项目与会话都是可读的，但选择状态不是。** `ctx.get('workspaces')` 的 `list.getSnapshot().items` 给出项目，每个项目的 `sessionIds` 就是它的成员（侧边栏就是按它分组的）；`ctx.get('sessions')` 的 `list.getSnapshot().byId` 给出标题、是否在跑、是否空白。但**没有任何公开字段说"当前选中的是哪个会话"**——真正的选择状态是 workspace 插件的私有字段。产品自己用的是「主栏恰好 retain 了一个会话」这个事实，本插件用的是同一条规则（`retainedBy.mainView > 0`），这也是第一方代码在五处的写法。
 
-**投递与显示状态无关。** `sessions.retain(id, { source })` 拿到 `await reference.ready` 之后，`binding.session.prompt([{ type: 'text', text }], 'queue')` 会把消息带着**显式的 sessionId** 发到 host，所以目标会话开不开着都一样。真实代价是 retain 会把那个会话的历史拉起来，所以消息一被接受就 `release()`。
+**切换与插入是两个组件的事。** `ctx.get('uiWorkspace').openSession(id)` 把主栏切到目标会话；插入本身由 `ComposerEntry` 完成，它只存在于会话的 slot 树里，所以请求要走 `pending.ts` 的模块级 store。顺序是**先切后放**：先放请求会让"当前挂着的那个 composer"——也就是用户正在离开的那个会话——把它消费掉，这正是这一处最容易写错的地方。
 
-几个坑，都在 `src/client/index.ts` 与 `src/client/session-target.ts` 里写明了：
+**不发消息，只留草稿。** 早先的版本用 `sessions.retain()` + `session.prompt()` 直接把一条带引用的消息发进去，那确实能投递到任意会话，但它替用户按了发送。现在选定会话后就切过去，引用落在输入框里，发不发由用户决定。顺带的好处是不再需要 retain：retain 会把目标会话的历史拉起来，还要在正确的时机释放，而切过去之后目标会话自然就是显示中的那个，`ComposerEntry` 拿到的 `inputActions` 就是它的。
 
-- **retain 是硬要求。** 不 retain 就没有 scope，`conversation.input.for(actx)` 会直接抛。想在别的会话里"停在草稿"而不是直接发，就必须 retain 并且**不能释放**——最后一个引用释放时那个草稿壳会被销毁。
-- **`SessionReferenceSource` 是封闭联合类型**，插件要用自己的标签得做模块增强。本插件没有引入那个类型：它只把 `source` 当字符串传给一个结构化接口，运行时它只是计数表里的一个键。
+其余几点仍然成立：
+
 - **一切经由 `ctx.get` + 本地结构类型，不 import 那几个包。** 两个原因：一是本插件对 harness 的运行时耦合为零，构建产物只 import `node:`；二是 `tsdown` 的 `neverBundle` 只列了已经在页面模块表里的包，从 `@deepseek-ai/dsh-api-session-controller/client` **取运行时值**会把第二个模块实例打进 bundle ——那意味着两份 `kScope` Symbol，作用域判断会静默失配。
-- **判断全在纯函数里。** 项目/会话两层怎么排序、哪些不该出现（子代理的会话、从未说过话的空白会话、没有会话的项目）、搜索怎么同时过滤两级、多文件的消息文本怎么拼——都在 `session-target.ts`，有 11 项测试盯着；`SessionPicker.tsx` 只负责把答案画出来并把键盘走查接上。
+- **判断全在纯函数里。** 项目/会话两层怎么排序、哪些不该出现（子代理的会话、从未说过话的空白会话、没有会话的项目）、搜索怎么同时过滤两级、多文件的引用文本怎么拼——都在 `session-target.ts`，有 11 项测试盯着；`SessionPicker.tsx` 只负责把答案画出来并把键盘走查接上。
+- **一次插入可以携带整批文件。** `pending.ts` 存的是路径列表，`reference-action.ts` 用 `targetMessage` 把能写成 `@` 语法的那些拼成一行，写不成的单个文件被丢掉而不是让整个手势失败；尾随空格仍然是 token 终止符。
 
 ---
 
@@ -252,5 +253,6 @@ npm view dsh-local-send     # 404/Not found 才是可以用的
 - **为什么删掉了输入框上方的横幅和标题栏里的小鱼**（前者在打字路径上，后者只在它所属的那个会话里看得见）→ `src/client/index.ts` 的模块注释与 `FloatingBuddy.tsx` 顶部
 - **为什么选择器是「分组」而不是「两步」、为什么用产品的 `Modal`、为什么键盘走查和鼠标共用一套高亮** → `src/client/SessionPicker.tsx` 顶部
 - **为什么相对时间和剩余时间返回字典键而不是句子**（第一版在中文面板里印着 `5s ago`）→ `src/client/format.ts` 的 `ageOf` / `etaOf`
-- **为什么"发送到会话"是直接发送，"加入会话"仍是插入草稿**（两个不同的意图，不是一个动作的两种措辞）→ `src/client/LocalSendPanel.tsx` 的 `TransferLine`
+- **为什么"发送到会话"是切过去 + 插入草稿而不是直接发送**（替用户按发送，等于替他决定了要说什么）→ `src/client/index.ts` 的 `openInSession`
+- **为什么先切会话再放请求**（否则当前挂载的那个 composer 会替用户消费掉它）→ 同上，以及 `src/client/pending.ts` 的模块注释
 - **与 harness 的运行时耦合为零** → 见上文[架构](#架构)，由 `tests/built.host.spec.ts` 守着

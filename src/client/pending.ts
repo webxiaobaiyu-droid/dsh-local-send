@@ -31,23 +31,25 @@
 const REQUEST_TTL_MS = 15_000
 
 /** The request waiting to be inserted, or `undefined` when there is none. */
-let pending: { readonly path: string; readonly at: number } | undefined
+let pending: { readonly paths: readonly string[]; readonly at: number } | undefined
 
 /** Everything waiting to hear that {@link pending} changed. */
 const listeners = new Set<() => void>()
 
 /**
- * Ask for one file to be referenced in the composer.
+ * Ask for files to be referenced in the composer.
  *
- * A later request replaces an earlier one rather than queueing behind it: the
- * user pressed a button, and two files added by two impatient clicks should not
- * both appear — the gesture means "this file", and the second click is the one
- * that counts.
+ * A list rather than a path because a received batch is usually several files
+ * and one press should reference all of them. A later request still replaces an
+ * earlier one rather than queueing behind it: the user pressed a button, and two
+ * batches added by two impatient clicks should not both appear — the second
+ * press is the one that counts.
  *
- * @param path - absolute path of the received file.
+ * @param paths - absolute paths of the received files.
  */
-export function requestReference(path: string): void {
-  pending = { path, at: Date.now() }
+export function requestReference(paths: readonly string[]): void {
+  if (paths.length === 0) return
+  pending = { paths: [...paths], at: Date.now() }
   for (const listener of listeners) listener()
 }
 
@@ -69,9 +71,9 @@ export function subscribeReference(listener: () => void): () => void {
  * Read without consuming because `useSyncExternalStore` may call this more than
  * once per render, and a snapshot that disappeared on first read would make the
  * composer render an empty state on its second pass.
- * @returns the pending path, or `undefined`.
+ * @returns the pending paths, or `undefined`.
  */
-export function readReference(): string | undefined {
+export function readReference(): readonly string[] | undefined {
   if (pending === undefined) return undefined
   // Expiry is applied on read rather than by a timer: nothing is scheduled while
   // no request is outstanding, and a stale request costs one comparison.
@@ -79,14 +81,14 @@ export function readReference(): string | undefined {
     pending = undefined
     return undefined
   }
-  return pending.path
+  return pending.paths
 }
 
 /**
  * Take the pending request.
- * @returns the path that was waiting, or `undefined` when there was none.
+ * @returns the paths that were waiting, or `undefined` when there were none.
  */
-export function consumeReference(): string | undefined {
+export function consumeReference(): readonly string[] | undefined {
   const taken = readReference()
   pending = undefined
   return taken
