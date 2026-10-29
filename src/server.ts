@@ -780,7 +780,10 @@ export class LocalSendServer {
     session.active.add(inFlight)
 
     const hash = createHash('sha256')
-    const stream = createWriteStream(staging)
+    // 1 MiB rather than the 16 KiB default: a multi-gigabyte upload spends most
+    // of its syscalls here otherwise, and the receive loop below is written to
+    // respect `write()` backpressure either way.
+    const stream = createWriteStream(staging, { highWaterMark: 1024 * 1024 })
     let received = 0
     let aborted: number | undefined
     try {

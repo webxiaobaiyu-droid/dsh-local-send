@@ -1,6 +1,6 @@
 {
   "name": "dsh-local-send",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "LAN file transfer for DeepSeek Harness: LocalSend-compatible peer discovery, send and receive, with received files one click from the conversation.",
   "keywords": [
     "deepseek-harness",
