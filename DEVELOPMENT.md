@@ -269,6 +269,7 @@ npm view dsh-local-send     # 404/Not found 才是可以用的
 - **悬浮同伴为什么在窗口角落而不是会话里、为什么可拖动且记住位置、为什么按下与拖动共用一次手势** → `src/client/FloatingBuddy.tsx` 顶部
 - **为什么删掉了输入框上方的横幅和标题栏里的小鱼**（前者在打字路径上，后者只在它所属的那个会话里看得见）→ `src/client/index.ts` 的模块注释与 `FloatingBuddy.tsx` 顶部
 - **为什么选择器是「分组」而不是「两步」、为什么用产品的 `Modal`、为什么键盘走查和鼠标共用一套高亮** → `src/client/SessionPicker.tsx` 顶部
+- **为什么拖放要停掉原生冒泡、而不只是 `preventDefault`**（DSH 在 `document` 上挂的附件拖放处理器不看 `defaultPrevented`，同一个文件会被面板和会话各收一次）→ `src/client/LocalSendPanel.tsx` 的 `onDrop`
 - **为什么相对时间和剩余时间返回字典键而不是句子**（第一版在中文面板里印着 `5s ago`）→ `src/client/format.ts` 的 `ageOf` / `etaOf`
 - **为什么"发送到会话"是切过去 + 插入草稿而不是直接发送**（替用户按发送，等于替他决定了要说什么）→ `src/client/index.ts` 的 `openInSession`
 - **为什么先切会话再放请求**（否则当前挂载的那个 composer 会替用户消费掉它）→ 同上，以及 `src/client/pending.ts` 的模块注释

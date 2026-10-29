@@ -263,11 +263,19 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
 
   const onDragEnter = useCallback((event: DragEvent<HTMLDivElement>): void => {
     if (!hasFiles(event)) return
+    // `defaultPrevented` is not a contract the product's own document-level drop
+    // handler honours: it takes any file drag that reaches `document` and feeds it
+    // to the conversation's attachment intake. A drop aimed at this panel has to
+    // stop travelling, or the same file is staged here *and* attached there — for
+    // a multi-gigabyte image that means the application processes it twice, which
+    // is exactly the kind of duplicate work a crash can come out of.
+    event.stopPropagation()
     dragDepth.current += 1
     setDragging(true)
   }, [])
 
-  const onDragLeave = useCallback((): void => {
+  const onDragLeave = useCallback((event: DragEvent<HTMLDivElement>): void => {
+    event.stopPropagation()
     dragDepth.current = Math.max(0, dragDepth.current - 1)
     if (dragDepth.current === 0) {
       setDragging(false)
@@ -279,6 +287,7 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
   const onDragOver = useCallback((event: DragEvent<HTMLDivElement>): void => {
     if (!hasFiles(event)) return
     event.preventDefault()
+    event.stopPropagation()
     event.dataTransfer.dropEffect = 'copy'
   }, [])
 
@@ -292,6 +301,12 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
    */
   const onDrop = useCallback((event: DragEvent<HTMLDivElement>): void => {
     event.preventDefault()
+    event.stopPropagation()
+    // React's stopPropagation covers its own delegated tree; the product's
+    // handlers are native listeners on `document`, so the native event is stopped
+    // too. `stopImmediatePropagation` also silences listeners on the same node —
+    // there is nothing below us that should still see this drop.
+    event.nativeEvent.stopImmediatePropagation()
     dragDepth.current = 0
     setDragging(false)
     setDropTarget(undefined)
@@ -301,6 +316,7 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
   const dropOn = useCallback((peer: PeerRow, event: DragEvent<HTMLElement>): void => {
     event.preventDefault()
     event.stopPropagation()
+    event.nativeEvent.stopImmediatePropagation()
     dragDepth.current = 0
     setDragging(false)
     setDropTarget(undefined)
