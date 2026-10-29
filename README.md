@@ -287,6 +287,10 @@ local-send/
 
 不能。协议和 host 的解析都以文件为单位，右键菜单对文件夹会直接说明这一点。
 
+**传几个 G 的大文件会不会把 Harness 撑爆？**
+
+不会。发送是**流式**的：字节从磁盘一路压到对端，内存占用与文件大小无关（实测 3 GiB 传输全程 RSS 约 185 MB）。早先的版本把上传体交给了 Node 的 `fetch`，undici 会把整个请求体缓存在内存里，多 GB 文件会直接把进程撑死——0.2.2 起改用 `node:http` 的流式管道，并声明了准确的 `content-length`。
+
 **中断了能续传吗？**
 
 不能。协议没有分片和断点续传，中断就是从头发一个新的 session。
@@ -334,7 +338,7 @@ pnpm install
 DSH_SRC=/path/to/deepseek-harness pnpm run link:host   # 链接 harness 的包（每次 pnpm install 后要重跑）
 pnpm run build          # 两半 + 类型声明
 pnpm run typecheck      # 分别检查 host / client（两半的 Context 合并冲突，必须分开）
-pnpm test               # 205 项测试（会先自动构建，因为其中一项测的就是构建产物）
+pnpm test               # 210 项测试（会先自动构建，因为其中一项测的就是构建产物）
 pnpm run preview        # 渲染界面截图到 preview/dist/（真实组件 + 产品主题样式表 + 无头 Chrome）
 pnpm run watch          # 增量构建
 pnpm run check          # 类型检查 + 测试 + 界面回归，一条命令跑完

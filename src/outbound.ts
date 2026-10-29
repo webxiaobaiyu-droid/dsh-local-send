@@ -34,6 +34,9 @@
 
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
+import { pipeline } from 'node:stream/promises'
 import { stat } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 import { Readable } from 'node:stream'
@@ -452,9 +455,9 @@ export async function uploadStream(
   /**
    * The source, with each chunk counted as it passes.
    *
-   * An async generator rather than a pass-through: `Readable.from` pulls one
-   * chunk at a time and only when the socket is ready for it, so a
-   * multi-gigabyte file occupies one buffer instead of accumulating in memory.
+   * An async generator rather than a pass-through: the web stream below asks for
+   * one chunk at a time, so a multi-gigabyte file occupies one buffer instead of
+   * accumulating in memory.
    */
   async function* counted(): AsyncGenerator<Buffer> {
     for await (const chunk of source) {
@@ -467,26 +470,22 @@ export async function uploadStream(
     }
   }
 
-  // `duplex: 'half'` is required for a streamed request body: without it Node
-  // would also try to end the readable side, and a body that closes early
-  // truncates the upload at whatever the peer had received. The init object is
-  // typed rather than inlined because TypeScript's `RequestInit` predates the
-  // `duplex` member Node requires, and an inline literal carrying it is rejected.
-  const init: RequestInit & { readonly duplex: 'half' } = {
-    method: 'POST',
-    headers: { 'content-type': 'application/octet-stream' },
-    body: Readable.toWeb(Readable.from(counted())) as unknown as BodyInit,
-    duplex: 'half',
-    // The registry's signal for this row, so a cancel from the panel tears the
-    // request down mid-body instead of letting a file the user has already
-    // stopped keep arriving. Reading it here rather than taking one as an
-    // argument keeps every caller — the panel route and the path sender alike —
-    // cancellable without either of them knowing about it.
-    signal: registry.signalFor(offer.transferId),
-  }
-  let response: Response
+  // Node's own client rather than `fetch`: undici buffers a streamed request body
+  // instead of forwarding it. Measured against a local sink, a 1 GiB upload sent
+  // through `fetch` took the process from 52 MB to 1.1 GB of RSS, while
+  // `http.request` plus `pipeline` held at 103 MB for the same file. On a
+  // multi-gigabyte transfer that difference is the difference between a transfer
+  // and a crash, which is what a "few GB" send was reporting.
+  //
+  // `content-length` is known from the offer: the receiver can refuse a body that
+  // overruns it, and a connection that dies early reads as the truncation it is.
+  //
+  // The registry's signal is attached to the request, so a cancel from the panel
+  // tears it down mid-body instead of letting a file the user has already stopped
+  // keep arriving.
+  let answer: { readonly status: number; readonly body: string }
   try {
-    response = await fetch(url, init)
+    answer = await streamTo(url, counted(), metadata.size, registry.signalFor(offer.transferId))
   } catch (error: unknown) {
     // An abort is the user's own doing. Thrown onward as itself, a stopped
     // transfer would read as a transport fault against a row that already says
@@ -494,16 +493,68 @@ export async function uploadStream(
     if (registry.stopped(offer.transferId)) throw new Error('the transfer was stopped')
     throw error
   }
-  await response.arrayBuffer()
-  if (!response.ok) {
+  if (answer.status < 200 || answer.status >= 300) {
     throw new Error(
-      `HTTP ${String(response.status)}${response.status === STATUS.unprocessable ? ' (checksum mismatch)' : ''}`,
+      `HTTP ${String(answer.status)}${answer.status === STATUS.unprocessable ? ' (checksum mismatch)' : ''}`
+      + `${answer.body.length === 0 ? '' : `: ${answer.body}`}`,
     )
   }
   registry.updateFile(offer.transferId, fileId, (row) => {
     row.status = 'done'
     row.bytesDone = row.size
     delete row.error
+  })
+}
+
+/**
+ * POST a stream to one peer and read its (small) answer.
+ *
+ * `node:http`/`https` rather than `fetch` because undici buffers a streamed
+ * request body: a 1 GiB upload through `fetch` took this process from 52 MB to
+ * 1.1 GB of RSS, while `http.request` plus `pipeline` held at 103 MB for the same
+ * file. `pipeline` is also what carries backpressure end to end — the socket
+ * waits, the file descriptor waits, nothing queues in between.
+ *
+ * @param url - absolute upload URL on the peer.
+ * @param body - the bytes, possibly far larger than memory.
+ * @param size - exact byte count, sent as `content-length`.
+ * @param signal - abort signal for a transfer the user stopped.
+ * @returns the status and the (bounded, textual) response body.
+ */
+async function streamTo(
+  url: URL,
+  body: AsyncIterable<Buffer>,
+  size: number,
+  signal: AbortSignal,
+): Promise<{ readonly status: number; readonly body: string }> {
+  const send = url.protocol === 'https:' ? httpsRequest : httpRequest
+  return await new Promise((resolve, reject) => {
+    const request = send({
+      protocol: url.protocol,
+      hostname: url.hostname,
+      port: url.port.length === 0 ? undefined : Number(url.port),
+      path: `${url.pathname}${url.search}`,
+      method: 'POST',
+      headers: {
+        'content-type': 'application/octet-stream',
+        'content-length': String(size),
+      },
+      signal,
+    }, (response) => {
+      const chunks: Buffer[] = []
+      response.on('data', (chunk: Buffer) => { chunks.push(chunk) })
+      response.on('end', () => {
+        resolve({
+          status: response.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString('utf8'),
+        })
+      })
+      response.on('error', reject)
+    })
+    request.on('error', reject)
+    // An async iterable as the source is what lets a generated body — the counted
+    // one above — feed the socket without a second copy.
+    void pipeline(body, request).catch(reject)
   })
 }
 

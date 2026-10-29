@@ -31,7 +31,8 @@ import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createSocket } from 'node:dgram'
 import { createReadStream, createWriteStream, mkdirSync, statSync } from 'node:fs'
-import { Readable } from 'node:stream'
+import { request as httpRequest } from 'node:http'
+import { pipeline } from 'node:stream/promises'
 import { networkInterfaces } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -231,8 +232,17 @@ async function handleUpload(request, response, url, remote) {
   const destination = join(SAVE_DIR, sanitize(String(metadata.fileName)))
   const hash = createHash('sha256')
   const out = createWriteStream(destination)
+  // Backpressure matters here for the same reason it does in the plugin: a
+  // multi-gigabyte body that is written without waiting for `drain` accumulates
+  // in the writable stream's buffer and takes the process with it.
   await new Promise((done, fail) => {
-    request.on('data', (chunk) => { hash.update(chunk); out.write(chunk) })
+    request.on('data', (chunk) => {
+      hash.update(chunk)
+      if (!out.write(chunk)) {
+        request.pause()
+        out.once('drain', () => { request.resume() })
+      }
+    })
     request.on('end', () => { out.end(() => done()) })
     request.on('error', fail)
     out.on('error', fail)
@@ -313,18 +323,15 @@ async function sendTo(target, paths) {
     index += 1
     const url = `${origin}${API}/upload?sessionId=${encodeURIComponent(sessionId)}&fileId=${encodeURIComponent(fileId)}&token=${encodeURIComponent(token)}`
     const started = Date.now()
-    const uploaded = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/octet-stream' },
-      // Node's fetch speaks web streams, not fs.ReadStream; the conversion is
-      // the same one the plugin's own sender performs.
-      body: Readable.toWeb(createReadStream(findOriginal(file.fileName, paths))),
-      duplex: 'half',
-    })
-    if (uploaded.ok) {
+    // node:http rather than fetch: a streamed body handed to fetch is buffered in
+    // the peer's process, which is exactly the failure this tool exists to
+    // reproduce — a probe that runs out of memory before the plugin does would
+    // report a healthy plugin as broken.
+    const uploaded = await postStream(url, createReadStream(findOriginal(file.fileName, paths)), file.size)
+    if (uploaded.status >= 200 && uploaded.status < 300) {
       log(`   (${String(index)}/${Object.keys(tokens).length}) ${file.fileName}: ${file.size} B in ${String(Date.now() - started)}ms`)
     } else {
-      log(`   ${file.fileName}: HTTP ${uploaded.status} — ${await uploaded.text()}`)
+      log(`   ${file.fileName}: HTTP ${String(uploaded.status)} — ${uploaded.body}`)
     }
   }
   log('done. The received copies are in the plugin\'s inbox (~/.dsh/local-send/inbox).')
@@ -343,6 +350,27 @@ function findOriginal(fileName, paths) {
   const hit = paths.map((path) => resolve(path)).find((path) => basename(path) === fileName)
   if (hit === undefined) throw new Error(`no offered path matches the name ${fileName}`)
   return hit
+}
+
+/** POST one file body to a URL and read the small answer. */
+function postStream(url, body, size) {
+  const target = new URL(url)
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({
+      hostname: target.hostname,
+      port: target.port.length === 0 ? undefined : Number(target.port),
+      path: `${target.pathname}${target.search}`,
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream', 'content-length': String(size) },
+    }, (response) => {
+      let text = ''
+      response.on('data', (chunk) => { text += chunk })
+      response.on('end', () => resolve({ status: response.statusCode ?? 0, body: text }))
+      response.on('error', reject)
+    })
+    request.on('error', reject)
+    void pipeline(body, request).catch(reject)
+  })
 }
 
 /** Read a whole file into one buffer, for hashing. */

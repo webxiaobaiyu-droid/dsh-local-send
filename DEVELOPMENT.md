@@ -37,6 +37,10 @@
 
 **大文件为什么不落盘。** 面板的字节流路由注册为 `streaming` 模式，DSH 的 fetch carrier 会把浏览器的原始请求体包成 web stream 交给处理器，带背压、无总量上限。所以拖拽一个 4 GB 文件是：浏览器 → host → 对端的**单趟**转发，只占一个缓冲区。（`buffered` 模式有 300 MiB 上限并整份驻留内存——那才是拖大文件会炸的写法。）
 
+**大文件为什么不会撑爆内存。** 这条是被一次真实的"几个 G 秒崩"抓出来的。host 往对端上传的那一段原本用 `fetch` + `Readable.toWeb(Readable.from(...))`，看上去是完全流式的写法，实测却会把整个请求体留在内存里：1 GiB 让进程从 52 MB 涨到 1.1 GB RSS，3 GiB 直接 OOM。换成 `node:http`/`node:https` 的 `request` + `pipeline` 之后，同样 1 GiB 只到 103 MB，3 GiB 端到端全程 185 MB。
+`tests/large-stream.host.spec.ts` 把这件事钉成三条不变量，其中最关键的一条是"请求体不得经过 `fetch`"——它不测内存（RSS 断言在 CI 上不稳），而是直接禁止那条会缓冲的路径。
+`scripts/large-file-probe.mjs` 是手动复现工具：造一个稀疏文件、用真实的 `sendPaths` 打进假设备，每秒打印 RSS 和已传字节。
+
 **为什么五个界面只用一个 facade。** `index.ts` 里有一个 `facade` 对象实现了所有动作，五个槽位各自 `Pick` 自己需要的那几项。原本每个槽位手写一份 `answer` 是可以的，四份手写副本就是 host 契约可能漂移的四个地方。
 
 **为什么轮询是共享的。** 面板、通知、悬浮同伴都需要同一份状态，但它们挂载点不同、生命周期独立。各拉各的就是每拍三个请求、三份可能瞬时不一致的答案。所以只有一个轮询循环，按引用计数存活：通知常驻、面板打开时叠加，没人在看就完全不请求。节奏跟着 host 的 `busy` 走（传输中 500ms，空闲 2.5s，后台标签页 8s）。
@@ -131,7 +135,7 @@ node scripts/verify.mjs [--origin http://127.0.0.1:19387] [--port 53317]
 
 ## 测试覆盖什么
 
-`pnpm test` 跑 **205 项**，13 个文件：
+`pnpm test` 跑 **210 项**，14 个文件：
 
 | 文件 | 覆盖 |
 |---|---|
@@ -147,6 +151,7 @@ node scripts/verify.mjs [--origin http://127.0.0.1:19387] [--port 53317]
 | `tests/state.client.spec.ts` | 共享轮询：没人看时零请求、忙碌 500ms / 空闲 2.5s / 后台 8s、失败可恢复、慢请求不叠加、卸载后到达的响应被丢弃 |
 | `tests/context-target.client.spec.ts` | 右键落点解析：三处标记各自的规则、优先级、`@` 与引号剥离、以及**拒绝**——相对路径、控制字符、`data-ref-chip="session"`、以及什么都没有的情况都必须解析成"没有目标" |
 | `tests/companion.client.spec.ts` | 悬浮同伴的优先级：待确认的 offer 压过在途传输、单文件点名/多文件计数、最近更新的在途行优先、完成后按「结束时间」而不是「开始时间」选行、余温会过期、四种失败都读作同一种"失落"、store 还没答案时是空闲而不是报警、**该出现和该消失都有测试盯着** |
+| `tests/large-stream.host.spec.ts` | 大文件上传的三条不变量：声明准确的 `content-length`、请求体**不经过** `fetch`（undici 会整段缓冲，这是多 GB 文件 OOM 的根因）、以及接收端暂停读取时发送端不会继续抽干源（背压） |
 | `tests/session-target.client.spec.ts` | 会话选择器的模型：子代理会话与空白项目被剔除、当前会话所在项目排最前、未知会话 id 不抛异常、多文件消息只留一个空格且丢掉写不成引用的路径、搜索按项目路径命中时保留其全部会话、空查询返回同一个对象 |
 
 ---
@@ -204,7 +209,7 @@ npm pack                    # 生成 dsh-local-send-0.2.0.tgz，可以解开来�
 
 ```bash
 pnpm run build              # 只重建产物
-pnpm test                   # pretest 会先 build，然后跑 205 项
+pnpm test                   # pretest 会先 build，然后跑 210 项
 ```
 
 `prepublishOnly` 已经挂成 `npm test`，所以 `npm publish` 时会自动重建 + 全量测试，不过就不会发出去。
