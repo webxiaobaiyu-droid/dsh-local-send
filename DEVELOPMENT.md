@@ -41,6 +41,8 @@
 `tests/large-stream.host.spec.ts` 把这件事钉成三条不变量，其中最关键的一条是"请求体不得经过 `fetch`"——它不测内存（RSS 断言在 CI 上不稳），而是直接禁止那条会缓冲的路径。
 `scripts/large-file-probe.mjs` 是手动复现工具：造一个稀疏文件、用真实的 `sendPaths` 打进假设备，每秒打印 RSS 和已传字节。
 
+**为什么拖进来的文件不走浏览器上传**（0.2.5）。桌面 shell 的 preload 暴露了 `window.__DSH_HOST_PATHS__.pathFor(file)`（Electron 的 `webUtils.getPathForFile`），所以一个被拖入或选中的文件是**有路径**的——把路径交给 host，让 host 自己读盘，比把字节从渲染进程流一遍少一次拷贝，也让几 GB 的文件根本进不了浏览器上传路径。整批文件都有路径时才走这条；只要有一个没有（黏贴的图片），整批退回流式，避免一个手势拆成两个 offer、两个会话、两行记录。判断在 `src/client/local-path.ts`，9 项测试盯着拒绝分支（空串、相对路径、抛异常的 shell）。
+
 **吞吐上的四个改动**（0.2.3），都是"每字节的固定开销"，不是协议变化：
 
 | 改动 | 依据（本机回环，空 sink） |

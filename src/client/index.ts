@@ -56,6 +56,7 @@ import { ContextSendMenu, type ContextSendMenuInjected } from './ContextSendMenu
 import { FloatingBuddy, type FloatingBuddyInjected } from './FloatingBuddy.tsx'
 import { flash } from './flash.ts'
 import { LocalSendPanel, type LocalSendPanelInjected } from './LocalSendPanel.tsx'
+import { hostPathsBridge, localPathsOf } from './local-path.ts'
 import { en, zh, type LocalSendLocaleKey } from './locales.ts'
 import { HandoffIcon } from './icons.tsx'
 import { requestReference } from './pending.ts'
@@ -314,6 +315,16 @@ export function apply(ctx: ClientContext): void {
    */
   async function sendBrowserFiles(peer: string, files: readonly File[]): Promise<void> {
     if (files.length === 0) return
+    // A file the shell can name is a file the host can read itself. Handing it
+    // the path instead of the bytes removes a whole copy — renderer → web server
+    // → host → peer becomes host → peer — and it keeps a multi-gigabyte file out
+    // of the browser's upload machinery entirely. Pasted files have no path and
+    // still stream; see `local-path.ts`.
+    const localPaths = localPathsOf(files, hostPathsBridge())
+    if (localPaths !== undefined) {
+      await sendPaths({ peer, paths: localPaths })
+      return
+    }
     // Ids have to be stable across the two calls: the preparation names them and
     // the streaming call addresses them.
     const offered = files.map((file, index) => ({
