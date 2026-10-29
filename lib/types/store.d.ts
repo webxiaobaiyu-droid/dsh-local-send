@@ -26,6 +26,8 @@ export interface StorePaths {
     readonly root: string;
     /** Durable device identity. */
     readonly device: string;
+    /** Preferences changed from the panel. */
+    readonly settings: string;
     /** Where received files are saved. */
     readonly inbox: string;
     /** Where an upload is written while it is still arriving. */
@@ -47,6 +49,31 @@ export declare function storePaths(dshHome: string): StorePaths;
  * @param paths - the path set to materialize.
  */
 export declare function ensureDirectories(paths: StorePaths): void;
+/**
+ * Preferences the reader changes from the panel.
+ *
+ * Apart from `device.json` on purpose: the identity is what peers know, and
+ * losing it makes this device a stranger; a preference is a setting that a
+ * reset can simply fall back on. Kept as one small document so a later
+ * preference does not need a second file.
+ */
+export interface StoredSettings {
+    /** Directory received files are saved to; empty means "use the deployment's choice". */
+    receiveDir: string;
+}
+/**
+ * Read the panel settings, tolerating anything unreadable.
+ *
+ * @param paths - the path set owning `settings.json`.
+ * @returns the settings in effect.
+ */
+export declare function loadSettings(paths: StorePaths): StoredSettings;
+/**
+ * Write the panel settings atomically.
+ * @param paths - the path set owning `settings.json`.
+ * @param settings - the settings to persist.
+ */
+export declare function saveSettings(paths: StorePaths, settings: StoredSettings): void;
 /** This device's durable identity, as stored on disk. */
 export interface StoredDevice {
     /**
@@ -138,4 +165,4 @@ export declare function resolveConfig(config: Partial<LocalSendConfig> | undefin
  * @param paths - the default path set.
  * @returns the absolute receive directory, which may be outside the harness home.
  */
-export declare function receiveDirectory(config: LocalSendConfig, paths: StorePaths): string;
+export declare function receiveDirectory(config: LocalSendConfig, paths: StorePaths, stored?: string): string;

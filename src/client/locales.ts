@@ -34,6 +34,9 @@ export const zh = {
   notServing: '未能监听端口，暂时收不到文件',
   addressLabel: '地址',
   noAddress: '未连接到网络',
+  editInbox: '更改目录',
+  inboxPlaceholder: '/绝对/路径，例如 ~/Downloads（需展开为绝对路径）',
+  inboxFailed: '无法使用该目录：{message}',
 
   // Nearby
   nearby: '附近设备',
@@ -212,6 +215,9 @@ export const en: Record<LocalSendLocaleKey, string> = {
   notServing: 'Not listening, so it cannot receive right now',
   addressLabel: 'Address',
   noAddress: 'Not connected to a network',
+  editInbox: 'Change folder',
+  inboxPlaceholder: '/absolute/path, e.g. /Users/you/Downloads',
+  inboxFailed: 'That folder cannot be used: {message}',
 
   nearby: 'Nearby',
   rescan: 'Search',

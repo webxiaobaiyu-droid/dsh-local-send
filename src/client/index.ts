@@ -49,6 +49,7 @@ import {
   reveal,
   scan,
   sendPaths,
+  setInbox,
   streamFile,
 } from './api.ts'
 import { ComposerEntry, type ComposerEntryInjected } from './ComposerEntry.tsx'
@@ -434,6 +435,7 @@ export function apply(ctx: ClientContext): void {
     cancel: async (transferId: string): Promise<void> => { await cancelTransfer({ transferId }) },
     retry: async (transferId: string): Promise<void> => { await retryTransfer({ transferId }) },
     renameDevice: async (alias: string): Promise<void> => { await rename(alias) },
+    setInbox: async (directory: string): Promise<void> => { await setInbox(directory) },
     scanNow: async (): Promise<{ found: number }> => await scan(),
     revealFile: async (path: string): Promise<void> => { await reveal(path) },
     inspectPaths: async (paths: readonly string[]) => (await inspect(paths)).candidates,

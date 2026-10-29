@@ -169,7 +169,7 @@ ls ~/.dsh/profiles/desktop/node_modules/ | grep local-send
 
 打开侧边栏的「隔空传文件」，**附近设备**里会列出局域网内所有 LocalSend 设备（官方 App 也在这里）。然后拖文件上去、点「选择文件发送」、或点「按路径发送」填绝对路径。
 
-面板顶部写着本机的状态：设备名、地址、收件箱路径。设备名可以点「改名」当场改（存在 `device.json` 里）。
+面板顶部写着本机的状态：设备名、地址、收件箱路径。设备名可以点「改名」当场改（存在 `device.json` 里）；**收件目录也能点「更改目录」当场改**，填一个绝对路径即可，host 会创建它并从这里开始收文件（存在 `settings.json` 里，优先于配置里的 `receiveDir`）。
 
 ### 收文件
 
@@ -232,7 +232,7 @@ ls ~/.dsh/profiles/desktop/node_modules/ | grep local-send
     maxFileBytes: 17179869184      # 单文件 16 GiB
     maxTransferBytes: 68719476736  # 单次 64 GiB
     maxFiles: 500
-    receiveDir: ''            # 留空 = ~/.dsh/local-send/inbox
+    receiveDir: ''            # 留空 = ~/.dsh/local-send/inbox；面板里改过则以面板为准
 ```
 
 > 提示：patch 会**整体替换**该行的 `config`，所以改的时候要把想保留的键一起写上。
@@ -242,7 +242,8 @@ ls ~/.dsh/profiles/desktop/node_modules/ | grep local-send
 ```
 local-send/
 ├── device.json     # 设备名 + fingerprint（删掉会换一个新身份，对端会当成新设备）
-└── inbox/          # 收到的文件
+├── settings.json   # 面板里改过的偏好（目前是收件目录）
+└── inbox/          # 收到的文件（改过目录则用新目录）
     └── .partial/   # 传输中的临时文件
 ```
 
@@ -278,6 +279,10 @@ local-send/
 **传输是加密的吗？**
 
 不是。见[安全说明](#安全说明)。
+
+**收件目录能改吗？**
+
+能。面板顶部「更改目录」填绝对路径即可，当场生效，不用改配置也不用重启。配置里的 `receiveDir` 只是默认值，面板里选过就以面板为准。
 
 **收件箱会自己清理吗？**
 

@@ -61,6 +61,13 @@ export interface LocalSendPanelInjected {
     retry: (transferId: string) => Promise<void>;
     /** Rename this device and persist the name. */
     renameDevice: (alias: string) => Promise<void>;
+    /**
+     * Change the directory received files are saved to.
+     *
+     * Creates the directory host-side; rejects with the host's own explanation
+     * when it cannot be used, which is what the editor shows in place.
+     */
+    setInbox: (directory: string) => Promise<void>;
     /** Run the legacy subnet scan. */
     scanNow: () => Promise<{
         found: number;

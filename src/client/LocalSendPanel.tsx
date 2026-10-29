@@ -84,6 +84,13 @@ export interface LocalSendPanelInjected {
   retry: (transferId: string) => Promise<void>
   /** Rename this device and persist the name. */
   renameDevice: (alias: string) => Promise<void>
+  /**
+   * Change the directory received files are saved to.
+   *
+   * Creates the directory host-side; rejects with the host's own explanation
+   * when it cannot be used, which is what the editor shows in place.
+   */
+  setInbox: (directory: string) => Promise<void>
   /** Run the legacy subnet scan. */
   scanNow: () => Promise<{ found: number }>
   /** Show a received file — or the inbox itself — in the file manager. */
@@ -147,7 +154,7 @@ function fileCountLabel(
 export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
   const {
     t, store, sendFiles, sendLocalPaths, answer, cancel, retry,
-    renameDevice, scanNow, revealFile, inspectPaths, addToConversation, hasSession,
+    renameDevice, setInbox, scanNow, revealFile, inspectPaths, addToConversation, hasSession,
     readTargets, openInSession,
   } = props
   const read = useTransferState(store)
@@ -439,6 +446,10 @@ export function LocalSendPanel(props: LocalSendPanelProps): ReactNode {
                 await refresh()
               })
             }}
+            onSetInbox={async (directory) => {
+              await setInbox(directory)
+              await refresh()
+            }}
           />
         ) : null}
 
@@ -637,7 +648,7 @@ type Translate = LocalSendPanelProps['t']
 
 /** This device's identity, with its room to be renamed. */
 function ThisDevice(
-  { state, renaming, busy, t, onStartRename, onCancelRename, onRename }: {
+  { state, renaming, busy, t, onStartRename, onCancelRename, onRename, onSetInbox }: {
     readonly state: LocalSendState
     readonly renaming: boolean
     readonly busy: boolean
@@ -645,11 +656,37 @@ function ThisDevice(
     readonly onStartRename: () => void
     readonly onCancelRename: () => void
     readonly onRename: (alias: string) => void
+    readonly onSetInbox: (directory: string) => Promise<void>
   },
 ): ReactNode {
   const [draft, setDraft] = useState(state.device.alias)
   useEffect(() => { setDraft(state.device.alias) }, [state.device.alias])
+  const [editingInbox, setEditingInbox] = useState(false)
+  const [inboxDraft, setInboxDraft] = useState(state.inbox)
+  const [inboxProblem, setInboxProblem] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    if (!editingInbox) setInboxDraft(state.inbox)
+  }, [state.inbox, editingInbox])
   const address = state.device.addresses[0]
+
+  /**
+   * Persist the typed directory, or say why the host refused it.
+   *
+   * The host creates the directory and answers with its own message; showing
+   * that in place keeps the editor open on the value that failed instead of
+   * closing it and leaving the user to guess.
+   */
+  const saveInbox = async (): Promise<void> => {
+    const next = inboxDraft.trim()
+    if (next.length === 0) return
+    try {
+      await onSetInbox(next)
+      setInboxProblem(undefined)
+      setEditingInbox(false)
+    } catch (error: unknown) {
+      setInboxProblem(describe(error))
+    }
+  }
 
   return (
     <section className="dls-ident" aria-label={t('thisDevice')}>
@@ -681,37 +718,82 @@ function ThisDevice(
             <button type="button" className="dls-action" onClick={onCancelRename}>{t('cancel')}</button>
           </div>
         )
-        : (
-          <>
-            <span className="dls-identBody">
-              {/* One dot for the only state that changes whether anything can
-                  arrive at all. The name beside it is what the other device
-                  will show, which is why renaming lives here and not in a
-                  settings row somewhere else. */}
-              <span className="dls-identName">
-                <span className="dls-stateDot" data-ok={state.device.serving ? 'true' : 'false'} aria-hidden />
-                {state.device.alias}
-              </span>
-              <span className="dls-identMeta">
-                <span data-tone={state.device.serving ? 'ok' : 'warn'}>
-                  {state.device.serving ? t('serving') : t('notServing')}
+        : editingInbox
+          ? (
+            <div className="dls-identRename">
+              <input
+                className="dls-input"
+                value={inboxDraft}
+                autoFocus
+                spellCheck={false}
+                placeholder={t('inboxPlaceholder')}
+                aria-label={t('inboxPlaceholder')}
+                onChange={(event) => { setInboxDraft(event.target.value) }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void saveInbox()
+                  if (event.key === 'Escape') { setEditingInbox(false); setInboxProblem(undefined) }
+                }}
+              />
+              <button
+                type="button"
+                className="dls-action"
+                data-tone="primary"
+                disabled={busy || inboxDraft.trim().length === 0}
+                onClick={() => { void saveInbox() }}
+              >
+                {t('save')}
+              </button>
+              <button
+                type="button"
+                className="dls-action"
+                onClick={() => { setEditingInbox(false); setInboxProblem(undefined) }}
+              >
+                {t('cancel')}
+              </button>
+              {inboxProblem === undefined
+                ? null
+                : <span className="dls-note" data-tone="error">{t('inboxFailed', { message: inboxProblem })}</span>}
+            </div>
+          )
+          : (
+            <>
+              <span className="dls-identBody">
+                {/* One dot for the only state that changes whether anything can
+                    arrive at all. The name beside it is what the other device
+                    will show, which is why renaming lives here and not in a
+                    settings row somewhere else. */}
+                <span className="dls-identName">
+                  <span className="dls-stateDot" data-ok={state.device.serving ? 'true' : 'false'} aria-hidden />
+                  {state.device.alias}
                 </span>
-                {/* The address, then where files land. Both are facts the user
-                    needs to act on — one to tell the other device, one to point
-                    the agent at — so neither is behind a disclosure. */}
-                <span className="dls-identSep" aria-hidden>·</span>
-                <span className="dls-identFact" title={t('addressLabel')}>
-                  {address === undefined ? t('noAddress') : `${address}:${String(state.device.port)}`}
+                <span className="dls-identMeta">
+                  <span data-tone={state.device.serving ? 'ok' : 'warn'}>
+                    {state.device.serving ? t('serving') : t('notServing')}
+                  </span>
+                  {/* The address, then where files land. Both are facts the user
+                      needs to act on — one to tell the other device, one to point
+                      the agent at — so neither is behind a disclosure. */}
+                  <span className="dls-identSep" aria-hidden>·</span>
+                  <span className="dls-identFact" title={t('addressLabel')}>
+                    {address === undefined ? t('noAddress') : `${address}:${String(state.device.port)}`}
+                  </span>
+                  <span className="dls-identSep" aria-hidden>·</span>
+                  <span className="dls-identFact" title={state.inbox}>{state.inbox}</span>
+                  <button
+                    type="button"
+                    className="dls-action"
+                    data-tone="quiet"
+                    onClick={() => { setInboxProblem(undefined); setEditingInbox(true) }}
+                  >
+                    {t('editInbox')}
+                  </button>
                 </span>
-                <span className="dls-identSep" aria-hidden>·</span>
-                <span className="dls-identFact" title={state.inbox}>{state.inbox}</span>
               </span>
-            </span>
-            <button type="button" className="dls-action" data-tone="quiet" onClick={onStartRename}>
-              {t('rename')}
-            </button>
-          </>
-        )}
+              <button type="button" className="dls-action" data-tone="quiet" onClick={onStartRename}>
+                {t('rename')}
+              </button>
+            </>
+          )}
     </section>
   )
 }

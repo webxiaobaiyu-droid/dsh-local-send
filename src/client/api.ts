@@ -13,6 +13,7 @@
 import {
   CANCEL_PATH,
   DECIDE_PATH,
+  INBOX_PATH,
   INSPECT_PATH,
   PREPARE_PATH,
   RENAME_PATH,
@@ -183,6 +184,15 @@ export async function retryTransfer(request: RetryTransferRequest): Promise<Retr
  */
 export async function rename(alias: string): Promise<{ alias: string }> {
   return await post<{ alias: string }>(RENAME_PATH, { alias })
+}
+
+/**
+ * Change the directory received files are saved to.
+ * @param directory - absolute path the host should create and write into.
+ * @returns the directory now in effect.
+ */
+export async function setInbox(directory: string): Promise<{ directory: string }> {
+  return await post<{ directory: string }>(INBOX_PATH, { directory })
 }
 
 /**

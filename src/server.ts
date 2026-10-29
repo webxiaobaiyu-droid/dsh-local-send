@@ -59,6 +59,14 @@ export const APPROVAL_TIMEOUT_MS = 90_000
  * batch of open file handles and interleaved disk seeks, without telling the
  * sender no: a connection over the bound waits its turn rather than failing.
  */
+/**
+ * How often a receiving file publishes its byte count.
+ *
+ * The same beat the sender uses: the panel polls every 500 ms while busy, so
+ * anything finer is invisible and only wakes the watchers.
+ */
+const PROGRESS_INTERVAL_MS = 100
+
 const MAX_PARALLEL_WRITES = 4
 
 /**
@@ -84,6 +92,13 @@ export interface ServerHost {
   readonly warn: (message: string) => void
   /** Report a peer that called this device, so it appears in the peer list. */
   readonly sawPeer: (info: DeviceInfo, host: string) => void
+  /**
+   * Panel preferences, when the deployment has any.
+   *
+   * Optional so a test harness can mount the server without one; absent means
+   * "no preference", which is the same answer as an empty one.
+   */
+  readonly settings?: () => { readonly receiveDir: string }
 }
 
 /** One accepted transfer, as the server tracks it between preparation and upload. */
@@ -671,7 +686,7 @@ export class LocalSendServer {
     const config = this.host.config()
     const paths = this.host.paths
     ensureDirectories(paths)
-    const directory = receiveDirectory(config, paths)
+    const directory = receiveDirectory(config, paths, this.host.settings?.().receiveDir ?? '')
     if (directory !== paths.inbox) ensureDirectories({ ...paths, inbox: directory, partial: join(directory, '.partial') })
     return directory
   }
@@ -786,6 +801,16 @@ export class LocalSendServer {
     const stream = createWriteStream(staging, { highWaterMark: 1024 * 1024 })
     let received = 0
     let aborted: number | undefined
+    /**
+     * When the row last heard how much had arrived.
+     *
+     * The row used to be told only once, when the file was complete, so a
+     * receiving transfer sat at 0 % for its whole duration — the sender showed
+     * progress, the receiver looked stuck. Published at the same 100 ms beat the
+     * sender uses: the panel polls every 500 ms while busy, so a finer figure
+     * would only wake the watchers more often.
+     */
+    let publishedAt = 0
     try {
       for await (const chunk of request) {
         // A session the user stopped while this file was arriving. Checked here
@@ -806,6 +831,13 @@ export class LocalSendServer {
           break
         }
         hash.update(buffer)
+        const now = Date.now()
+        if (now - publishedAt >= PROGRESS_INTERVAL_MS) {
+          publishedAt = now
+          this.host.registry.updateFile(session.id, metadata.id, (file) => {
+            file.bytesDone = received
+          })
+        }
         if (!stream.write(buffer)) await once(stream, 'drain')
       }
       if (aborted === undefined) {

@@ -242,6 +242,16 @@ export interface PrepareSendResponse {
     readonly files: readonly string[];
 }
 /** Body of the route that opens a send from paths on this machine. */
+/** One write to the receive directory. */
+export interface SetInboxRequest {
+    /** Absolute directory received files should be saved to. */
+    readonly directory: string;
+}
+/** What a receive-directory write answers with. */
+export interface SetInboxResponse {
+    /** The directory now in effect. */
+    readonly directory: string;
+}
 export interface SendPathsRequest {
     /** Stable key of the peer to send to. */
     readonly peer: string;
@@ -333,6 +343,7 @@ export declare const STATE_PATH = "/api/dsh-local-send/state";
 /** Exact route that opens a send from browser-held files. */
 export declare const PREPARE_PATH = "/api/dsh-local-send/prepare";
 /** Exact route that accepts one file's bytes from the browser and forwards them. */
+export declare const INBOX_PATH = "/api/dsh-local-send/inbox";
 export declare const STREAM_PATH = "/api/dsh-local-send/stream";
 /** Exact route that sends files that already exist on this machine. */
 export declare const SEND_PATHS_PATH = "/api/dsh-local-send/send-paths";

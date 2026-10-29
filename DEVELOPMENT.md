@@ -149,7 +149,7 @@ node scripts/verify.mjs [--origin http://127.0.0.1:19387] [--port 53317]
 
 ## 测试覆盖什么
 
-`pnpm test` 跑 **210 项**，14 个文件：
+`pnpm test` 跑 **226 项**，16 个文件：
 
 | 文件 | 覆盖 |
 |---|---|
@@ -165,6 +165,7 @@ node scripts/verify.mjs [--origin http://127.0.0.1:19387] [--port 53317]
 | `tests/state.client.spec.ts` | 共享轮询：没人看时零请求、忙碌 500ms / 空闲 2.5s / 后台 8s、失败可恢复、慢请求不叠加、卸载后到达的响应被丢弃 |
 | `tests/context-target.client.spec.ts` | 右键落点解析：三处标记各自的规则、优先级、`@` 与引号剥离、以及**拒绝**——相对路径、控制字符、`data-ref-chip="session"`、以及什么都没有的情况都必须解析成"没有目标" |
 | `tests/companion.client.spec.ts` | 悬浮同伴的优先级：待确认的 offer 压过在途传输、单文件点名/多文件计数、最近更新的在途行优先、完成后按「结束时间」而不是「开始时间」选行、余温会过期、四种失败都读作同一种"失落"、store 还没答案时是空闲而不是报警、**该出现和该消失都有测试盯着** |
+| `tests/settings.host.spec.ts` | 面板设置：文档往返、损坏文档读作"没有偏好"、以及收件目录的三层优先级（面板 > 部署配置 > 默认收件箱） |
 | `tests/large-stream.host.spec.ts` | 大文件上传的三条不变量：声明准确的 `content-length`、请求体**不经过** `fetch`（undici 会整段缓冲，这是多 GB 文件 OOM 的根因）、以及接收端暂停读取时发送端不会继续抽干源（背压） |
 | `tests/session-target.client.spec.ts` | 会话选择器的模型：子代理会话与空白项目被剔除、当前会话所在项目排最前、未知会话 id 不抛异常、多文件消息只留一个空格且丢掉写不成引用的路径、搜索按项目路径命中时保留其全部会话、空查询返回同一个对象 |
 
@@ -223,7 +224,7 @@ npm pack                    # 生成 dsh-local-send-0.2.0.tgz，可以解开来�
 
 ```bash
 pnpm run build              # 只重建产物
-pnpm test                   # pretest 会先 build，然后跑 210 项
+pnpm test                   # pretest 会先 build，然后跑 226 项
 ```
 
 `prepublishOnly` 已经挂成 `npm test`，所以 `npm publish` 时会自动重建 + 全量测试，不过就不会发出去。
@@ -272,6 +273,8 @@ npm view dsh-local-send     # 404/Not found 才是可以用的
 - **为什么删掉了输入框上方的横幅和标题栏里的小鱼**（前者在打字路径上，后者只在它所属的那个会话里看得见）→ `src/client/index.ts` 的模块注释与 `FloatingBuddy.tsx` 顶部
 - **为什么选择器是「分组」而不是「两步」、为什么用产品的 `Modal`、为什么键盘走查和鼠标共用一套高亮** → `src/client/SessionPicker.tsx` 顶部
 - **为什么拖放要停掉原生冒泡、而不只是 `preventDefault`**（DSH 在 `document` 上挂的附件拖放处理器不看 `defaultPrevented`，同一个文件会被面板和会话各收一次）→ `src/client/LocalSendPanel.tsx` 的 `onDrop`
+- **为什么面板改的收件目录优先于部署配置**（个人能改的那个必须生效，否则面板看起来是坏的；配置只是没人设置时的默认值）→ `src/store.ts` 的 `receiveDirectory`
+- **为什么接收端也要按 100 ms 节流发布进度**（曾经只在文件写完时更新一次，接收方整段显示 0%）→ `src/server.ts` 的接收循环
 - **为什么相对时间和剩余时间返回字典键而不是句子**（第一版在中文面板里印着 `5s ago`）→ `src/client/format.ts` 的 `ageOf` / `etaOf`
 - **为什么"发送到会话"是切过去 + 插入草稿而不是直接发送**（替用户按发送，等于替他决定了要说什么）→ `src/client/index.ts` 的 `openInSession`
 - **为什么先切会话再放请求**（否则当前挂载的那个 composer 会替用户消费掉它）→ 同上，以及 `src/client/pending.ts` 的模块注释

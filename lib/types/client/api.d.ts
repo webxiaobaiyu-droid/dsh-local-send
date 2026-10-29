@@ -80,6 +80,14 @@ export declare function rename(alias: string): Promise<{
     alias: string;
 }>;
 /**
+ * Change the directory received files are saved to.
+ * @param directory - absolute path the host should create and write into.
+ * @returns the directory now in effect.
+ */
+export declare function setInbox(directory: string): Promise<{
+    directory: string;
+}>;
+/**
  * Run the legacy subnet scan.
  * @returns how many devices answered.
  */

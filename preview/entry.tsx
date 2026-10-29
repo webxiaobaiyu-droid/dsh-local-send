@@ -390,6 +390,7 @@ function face(state: LocalSendState): LocalSendPanelInjected {
     cancel: async () => {},
     retry: async () => {},
     renameDevice: async () => {},
+    setInbox: async () => {},
     scanNow: async () => ({ found: 0 }),
     revealFile: async () => {},
     inspectPaths: async () => [],

@@ -45,6 +45,15 @@ export interface ServerHost {
     readonly warn: (message: string) => void;
     /** Report a peer that called this device, so it appears in the peer list. */
     readonly sawPeer: (info: DeviceInfo, host: string) => void;
+    /**
+     * Panel preferences, when the deployment has any.
+     *
+     * Optional so a test harness can mount the server without one; absent means
+     * "no preference", which is the same answer as an empty one.
+     */
+    readonly settings?: () => {
+        readonly receiveDir: string;
+    };
 }
 /**
  * The LocalSend API server: one HTTP listener and the sessions it is holding.

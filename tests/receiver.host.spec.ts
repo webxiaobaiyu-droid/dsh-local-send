@@ -11,6 +11,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto'
+import { request as httpRequest } from 'node:http'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -188,6 +189,51 @@ describe('LocalSend receiver', () => {
     expect(upload.status).toBe(STATUS.unprocessable)
     const { readdirSync } = await import('node:fs')
     expect(readdirSync(harness.inbox).filter(name => name !== '.partial')).toEqual([])
+  })
+
+  it('publishes bytes while the file is still arriving', async () => {
+    // The row used to be told only at completion, so a receiving transfer showed
+    // 0 % for its whole duration — the sender had a progress bar and the receiver
+    // looked stuck. What distinguishes live progress from an end-of-transfer
+    // figure is the middle of the transfer, which is what this pins.
+    const harness = await startReceiver({ autoAccept: true })
+    const total = 1024 * 1024
+    const bytes = Buffer.alloc(total, 5)
+    const response = await prepare(harness, offer([fileOf('a', 'big.bin', bytes)]))
+    const body = await response.json() as { sessionId: string; files: Record<string, string> }
+    const target = new URL(`${urlOf(harness, 'upload')}?sessionId=${body.sessionId}&fileId=a&token=${body.files['a'] as string}`)
+
+    const half = total / 2
+    const request = httpRequest({
+      host: '127.0.0.1',
+      port: harness.port,
+      path: `${target.pathname}${target.search}`,
+      method: 'POST',
+      headers: { 'content-length': String(total) },
+    })
+    const done = new Promise<void>((resolve, reject) => {
+      request.on('response', (answer) => {
+        answer.on('data', () => {})
+        answer.on('end', () => { resolve() })
+      })
+      request.on('error', reject)
+    })
+    // Half the body, then hold the connection open: the row has to move while
+    // the request is still unfinished.
+    request.write(bytes.subarray(0, half))
+
+    /** The receiver's own published figure, once it has moved past zero. */
+    let mid = 0
+    for (let attempt = 0; attempt < 40 && mid < half; attempt += 1) {
+      await new Promise((wait) => setTimeout(wait, 25))
+      mid = harness.registry.list()[0]?.files[0]?.bytesDone ?? 0
+    }
+    expect(mid).toBeGreaterThan(0)
+    expect(mid).toBeLessThan(total)
+    expect(harness.registry.list()[0]?.files[0]?.status).toBe('transferring')
+    request.end(bytes.subarray(half))
+    await done
+    expect(harness.registry.list()[0]?.files[0]?.bytesDone).toBe(total)
   })
 
   it('refuses an upload presented from a token that is not its own', async () => {

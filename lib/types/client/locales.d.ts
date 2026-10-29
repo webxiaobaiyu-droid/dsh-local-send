@@ -31,6 +31,9 @@ export declare const zh: {
     readonly notServing: "未能监听端口，暂时收不到文件";
     readonly addressLabel: "地址";
     readonly noAddress: "未连接到网络";
+    readonly editInbox: "更改目录";
+    readonly inboxPlaceholder: "/绝对/路径，例如 ~/Downloads（需展开为绝对路径）";
+    readonly inboxFailed: "无法使用该目录：{message}";
     readonly nearby: "附近设备";
     readonly rescan: "搜索";
     readonly scanning: "正在搜索同一网络内的设备…";

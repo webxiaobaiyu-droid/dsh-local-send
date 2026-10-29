@@ -39,6 +39,8 @@ export interface StorePaths {
   readonly root: string
   /** Durable device identity. */
   readonly device: string
+  /** Preferences changed from the panel. */
+  readonly settings: string
   /** Where received files are saved. */
   readonly inbox: string
   /** Where an upload is written while it is still arriving. */
@@ -56,6 +58,7 @@ export function storePaths(dshHome: string): StorePaths {
   return {
     root,
     device: join(root, 'device.json'),
+    settings: join(root, 'settings.json'),
     inbox,
     partial: join(inbox, '.partial'),
   }
@@ -73,6 +76,54 @@ export function storePaths(dshHome: string): StorePaths {
 export function ensureDirectories(paths: StorePaths): void {
   mkdirSync(paths.inbox, { recursive: true })
   mkdirSync(paths.partial, { recursive: true })
+}
+
+/**
+ * Preferences the reader changes from the panel.
+ *
+ * Apart from `device.json` on purpose: the identity is what peers know, and
+ * losing it makes this device a stranger; a preference is a setting that a
+ * reset can simply fall back on. Kept as one small document so a later
+ * preference does not need a second file.
+ */
+export interface StoredSettings {
+  /** Directory received files are saved to; empty means "use the deployment's choice". */
+  receiveDir: string
+}
+
+/** The settings in effect when no document exists yet. */
+const DEFAULT_SETTINGS: StoredSettings = { receiveDir: '' }
+
+/**
+ * Read the panel settings, tolerating anything unreadable.
+ *
+ * @param paths - the path set owning `settings.json`.
+ * @returns the settings in effect.
+ */
+export function loadSettings(paths: StorePaths): StoredSettings {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(paths.settings, 'utf8'))
+    if (typeof parsed !== 'object' || parsed === null) return { ...DEFAULT_SETTINGS }
+    const raw = parsed as Record<string, unknown>
+    const receiveDir = raw['receiveDir']
+    return {
+      receiveDir: typeof receiveDir === 'string' ? receiveDir : '',
+    }
+  } catch {
+    return { ...DEFAULT_SETTINGS }
+  }
+}
+
+/**
+ * Write the panel settings atomically.
+ * @param paths - the path set owning `settings.json`.
+ * @param settings - the settings to persist.
+ */
+export function saveSettings(paths: StorePaths, settings: StoredSettings): void {
+  mkdirSync(paths.root, { recursive: true })
+  const temporary = `${paths.settings}.${randomUUID()}.tmp`
+  writeFileSync(temporary, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+  renameSync(temporary, paths.settings)
 }
 
 /** This device's durable identity, as stored on disk. */
@@ -254,6 +305,15 @@ function positiveOr(value: unknown, fallback: number): number {
  * @param paths - the default path set.
  * @returns the absolute receive directory, which may be outside the harness home.
  */
-export function receiveDirectory(config: LocalSendConfig, paths: StorePaths): string {
+export function receiveDirectory(
+  config: LocalSendConfig,
+  paths: StorePaths,
+  stored: string = '',
+): string {
+  // The panel's own choice comes first: it is the only one the person using the
+  // device can change, and a directory they picked in the UI that did not take
+  // effect would read as the panel being broken. A deployment's `receiveDir` is
+  // the default for a device nobody has configured, and the inbox is the floor.
+  if (stored.length > 0) return stored
   return config.receiveDir.length > 0 ? config.receiveDir : paths.inbox
 }

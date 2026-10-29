@@ -28,6 +28,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { mkdirSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { stat } from 'node:fs/promises'
 import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path'
@@ -63,6 +64,8 @@ import {
   resolveConfig,
   resolveDshHome,
   saveDevice,
+  loadSettings,
+  saveSettings,
   storePaths,
   type LocalSendConfig,
 } from './store.ts'
@@ -70,6 +73,7 @@ import { TransferRegistry, type OfferDecision } from './transfer.ts'
 import {
   CANCEL_PATH,
   DECIDE_PATH,
+  INBOX_PATH,
   INSPECT_PATH,
   PREPARE_PATH,
   RENAME_PATH,
@@ -91,6 +95,8 @@ import {
   type RetryTransferResponse,
   type SendPathsRequest,
   type SendPathsResponse,
+  type SetInboxRequest,
+  type SetInboxResponse,
   type StateWarning,
 } from './types.ts'
 
@@ -186,6 +192,8 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
   const paths = storePaths(resolveDshHome())
   ensureDirectories(paths)
   const device = loadDevice(paths, message => { ctx.logger.warn(`dsh-local-send: ${message}`) })
+  /** Panel preferences (today: the receive directory), read once and written through. */
+  const settings = loadSettings(paths)
   // An explicit `alias` in the Loader row wins for this run; otherwise the name
   // the user last chose in the panel is used, so the two entry points cannot
   // fight over which one is authoritative.
@@ -243,6 +251,7 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
     info: deviceInfo,
     registry,
     paths,
+    settings: () => settings,
     warn: (message: string): void => { ctx.logger.warn(`dsh-local-send: ${message}`) },
     sawPeer: (info: DeviceInfo, address: string): void => { observe(info, address, true) },
   }
@@ -335,7 +344,7 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
       // `canRetry` is joined in here rather than held on the registry row,
       // because only this half knows which sends still have their bytes.
       transfers: registry.list().map(row => sources.has(row.id) ? { ...row, canRetry: true } : row),
-      inbox: receiveDirectory(resolved, paths),
+      inbox: receiveDirectory(resolved, paths, settings.receiveDir),
       discovery: {
         active: discoveryWarning === undefined,
         ...discoveryWarning === undefined ? {} : { warning: discoveryWarning },
@@ -653,6 +662,33 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
 
   ctx.effect(
     () => connectionOf(ctx).fetch.register({
+      path: INBOX_PATH,
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: async (request) => {
+        const body = await readJson<SetInboxRequest>(request)
+        const directory = typeof body?.directory === 'string' ? body.directory.trim() : ''
+        // Absolute only: a relative answer would be resolved against the host
+        // process's working directory, which is not a place the user chose.
+        if (!directory.startsWith('/')) return errorResponse('expected an absolute directory path')
+        // eslint-disable-next-line no-control-regex -- rejecting them is the point
+        if (/[\u0000-\u001f]/u.test(directory)) return errorResponse('the path contains control characters')
+        try {
+          mkdirSync(directory, { recursive: true })
+        } catch (error: unknown) {
+          return errorResponse(`that directory cannot be created: ${describe(error)}`)
+        }
+        settings.receiveDir = directory
+        saveSettings(paths, settings)
+        ensureDirectories({ ...paths, inbox: directory, partial: join(directory, '.partial') })
+        return jsonResponse({ directory } satisfies SetInboxResponse)
+      },
+    }),
+    'dsh-local-send: inbox route',
+  )
+
+  ctx.effect(
+    () => connectionOf(ctx).fetch.register({
       path: SCAN_PATH,
       methods: ['POST'],
       requestBody: 'buffered',
@@ -768,7 +804,7 @@ export function apply(ctx: Context, config: Partial<LocalSendConfig> = {}): void
 
   ctx.logger.info(
     `dsh-local-send: "${device.alias}" serving on ${resolved.protocol}://0.0.0.0:${String(resolved.port)}`
-    + `, announcing every ${String(ANNOUNCE_INTERVAL_MS / 1000)}s, inbox ${receiveDirectory(resolved, paths)}`,
+    + `, announcing every ${String(ANNOUNCE_INTERVAL_MS / 1000)}s, inbox ${receiveDirectory(resolved, paths, settings.receiveDir)}`,
   )
 }
 
