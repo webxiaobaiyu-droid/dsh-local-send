@@ -215,7 +215,7 @@ pnpm run preview
 
 ```bash
 npm pack --dry-run          # 打印清单和体积，不产生文件
-npm pack                    # 生成 dsh-local-send-0.2.0.tgz，可以解开来核对
+npm pack                    # 生成 dsh-local-send-0.3.1.tgz，可以解开来核对
 ```
 
 白名单在 `package.json` 的 `files` 里：`lib`（加载器真正读的产物和类型声明）、`cordis.patch.yml`（bundle 补丁）、`src`（源码，也让两个自测脚本在装好之后仍可运行）、`scripts`（`verify.mjs` 和假设备工具）、`docs`（README 里的三张图）、`DEVELOPMENT.md`。`README.md`、`LICENSE`、`package.json` 由 npm 自动带上——**所以 README 里引用的 `docs/*.png` 必须在 `files` 里**，否则图片在 npm 页面上会裂。
@@ -247,7 +247,7 @@ npm view dsh-local-send     # 404/Not found 才是可以用的
 发布之后，用户装的是 npm 上的版本而不是 `link:` 本地路径：
 
 ```json
-"dependencies": { "dsh-local-send": "^0.2.0" }
+"dependencies": { "dsh-local-send": "^0.3.1" }
 ```
 
 ---

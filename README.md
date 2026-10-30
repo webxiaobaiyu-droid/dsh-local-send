@@ -109,7 +109,7 @@ DSH 没有给插件用的右键菜单扩展点，所以这个菜单是插件自�
     }
   },
   "dependencies": {
-    "dsh-local-send": "^0.2.0"
+    "dsh-local-send": "^0.3.1"
   }
 }
 ```
