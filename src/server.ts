@@ -799,6 +799,21 @@ export class LocalSendServer {
     // of its syscalls here otherwise, and the receive loop below is written to
     // respect `write()` backpressure either way.
     const stream = createWriteStream(staging, { highWaterMark: 1024 * 1024 })
+    /**
+     * The first thing that went wrong writing the staging file.
+     *
+     * A write stream reports failures as an `'error'` **event**, and an
+     * unhandled one is an uncaught exception that ends the whole host process —
+     * the "desktop host exited with 1: ERR_STREAM_DESTROYED" a receiving machine
+     * was reporting, where a disk or a file lock failed mid-transfer and the
+     * application died instead of failing one file. Recording it here turns
+     * that into a failed row: the loop below checks it, and `once(stream,
+     * 'drain')` rejects on the same event.
+     */
+    let writeFailure: Error | undefined
+    stream.on('error', (error: Error) => {
+      writeFailure ??= error
+    })
     let received = 0
     let aborted: number | undefined
     /**
@@ -821,6 +836,9 @@ export class LocalSendServer {
           aborted = STATUS.conflict
           break
         }
+        // The disk gave up on an earlier chunk; reading the rest of the body
+        // would only write into a stream that cannot take it.
+        if (writeFailure !== undefined) break
         const buffer = chunk as Buffer
         received += buffer.length
         // The agreed size is the ceiling, not the announced one: a sender that
@@ -840,6 +858,7 @@ export class LocalSendServer {
         }
         if (!stream.write(buffer)) await once(stream, 'drain')
       }
+      if (writeFailure !== undefined) throw writeFailure
       if (aborted === undefined) {
         await new Promise<void>((resolve, reject) => {
           stream.end((error?: Error | null) => {
@@ -905,7 +924,11 @@ export class LocalSendServer {
     } catch (error: unknown) {
       rmSync(staging, { force: true })
       this.failFile(session.id, metadata.id, describe(error))
-      fail(response, STATUS.serverError, MESSAGE.internal)
+      // The OS message travels to the sender: "Internal server error" tells a
+      // person nothing they can act on, while "EACCES: permission denied" or
+      // "ENOSPC" says which end has the problem. The reference client falls
+      // back to the body's message, which is why it is safe to be specific.
+      fail(response, STATUS.serverError, describe(error))
       return
     }
     // Timestamps are advisory: failing to apply them must not fail a file that

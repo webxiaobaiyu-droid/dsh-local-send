@@ -12,7 +12,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { request as httpRequest } from 'node:http'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -234,6 +234,41 @@ describe('LocalSend receiver', () => {
     request.end(bytes.subarray(half))
     await done
     expect(harness.registry.list()[0]?.files[0]?.bytesDone).toBe(total)
+  })
+
+  it('fails one file when the disk refuses it, instead of ending the host', async () => {
+    // The bug this exists for: a write stream's failure is an `'error'` event,
+    // and an unhandled one is an uncaught exception — a receiving machine
+    // crashed with "desktop host exited with 1: ERR_STREAM_DESTROYED" because a
+    // file could not be written. So the assertion is not only "the upload was
+    // refused" but "nothing escaped to the process", which is the difference
+    // between a failed row and a dead host.
+    if (process.getuid?.() === 0) return
+    const harness = await startReceiver({ autoAccept: true })
+    const bytes = Buffer.from('this cannot be written')
+    const response = await prepare(harness, offer([fileOf('a', 'x.txt', bytes)]))
+    const body = await response.json() as { sessionId: string; files: Record<string, string> }
+    const partial = join(harness.inbox, '.partial')
+
+    let escaped: Error | undefined
+    const onUncaught = (error: Error): void => { escaped ??= error }
+    process.on('uncaughtException', onUncaught)
+    try {
+      chmodSync(partial, 0o500)
+      const upload = await fetch(
+        `${urlOf(harness, 'upload')}?sessionId=${body.sessionId}&fileId=a&token=${body.files['a'] as string}`,
+        { method: 'POST', body: bytes },
+      )
+      // A late `'error'` from the stream would arrive after the response.
+      await new Promise((wait) => setTimeout(wait, 100))
+      expect(escaped).toBeUndefined()
+      expect(upload.ok).toBe(false)
+    } finally {
+      chmodSync(partial, 0o700)
+      process.off('uncaughtException', onUncaught)
+    }
+    const row = harness.registry.list()[0]
+    expect(row?.files[0]?.status).toBe('failed')
   })
 
   it('refuses an upload presented from a token that is not its own', async () => {

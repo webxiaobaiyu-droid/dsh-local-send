@@ -215,7 +215,7 @@ pnpm run preview
 
 ```bash
 npm pack --dry-run          # 打印清单和体积，不产生文件
-npm pack                    # 生成 dsh-local-send-0.3.1.tgz，可以解开来核对
+npm pack                    # 生成 dsh-local-send-0.3.2.tgz，可以解开来核对
 ```
 
 白名单在 `package.json` 的 `files` 里：`lib`（加载器真正读的产物和类型声明）、`cordis.patch.yml`（bundle 补丁）、`src`（源码，也让两个自测脚本在装好之后仍可运行）、`scripts`（`verify.mjs` 和假设备工具）、`docs`（README 里的三张图）、`DEVELOPMENT.md`。`README.md`、`LICENSE`、`package.json` 由 npm 自动带上——**所以 README 里引用的 `docs/*.png` 必须在 `files` 里**，否则图片在 npm 页面上会裂。
@@ -247,7 +247,7 @@ npm view dsh-local-send     # 404/Not found 才是可以用的
 发布之后，用户装的是 npm 上的版本而不是 `link:` 本地路径：
 
 ```json
-"dependencies": { "dsh-local-send": "^0.3.1" }
+"dependencies": { "dsh-local-send": "^0.3.2" }
 ```
 
 ---
@@ -274,6 +274,7 @@ npm view dsh-local-send     # 404/Not found 才是可以用的
 - **为什么选择器是「分组」而不是「两步」、为什么用产品的 `Modal`、为什么键盘走查和鼠标共用一套高亮** → `src/client/SessionPicker.tsx` 顶部
 - **为什么拖放要停掉原生冒泡、而不只是 `preventDefault`**（DSH 在 `document` 上挂的附件拖放处理器不看 `defaultPrevented`，同一个文件会被面板和会话各收一次）→ `src/client/LocalSendPanel.tsx` 的 `onDrop`
 - **为什么面板改的收件目录优先于部署配置**（个人能改的那个必须生效，否则面板看起来是坏的；配置只是没人设置时的默认值）→ `src/store.ts` 的 `receiveDirectory`
+- **为什么接收的写流必须挂 `error` 监听**（流错误是事件，不是返回值；没人接就是未捕获异常，Windows 上表现为 `desktop host exited with 1: ERR_STREAM_DESTROYED`，整个应用退出）→ `src/server.ts` 的接收循环
 - **为什么接收端也要按 100 ms 节流发布进度**（曾经只在文件写完时更新一次，接收方整段显示 0%）→ `src/server.ts` 的接收循环
 - **为什么相对时间和剩余时间返回字典键而不是句子**（第一版在中文面板里印着 `5s ago`）→ `src/client/format.ts` 的 `ageOf` / `etaOf`
 - **为什么"发送到会话"是切过去 + 插入草稿而不是直接发送**（替用户按发送，等于替他决定了要说什么）→ `src/client/index.ts` 的 `openInSession`
